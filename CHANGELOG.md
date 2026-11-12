@@ -68,5 +68,11 @@ and this project adheres to
   ones under their source names when `drop_unmapped_columns` is `false`. A
   missing mapped source column, or a kept column named like a target
   column, raises `TransformError`.
+- `cast_columns` casts `int`, `float` and `bool` columns to `Int64`,
+  `Float64` and `Boolean`; `string` values are kept as written. Numeric
+  and bool values are trimmed and blank ones become null. Bools accept
+  `true` / `false` in any case; floats reject `nan` and `inf`. A value
+  that cannot be cast becomes null and its row gets the reason
+  `<name>: invalid <type>` in the `#rejections` list column.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
