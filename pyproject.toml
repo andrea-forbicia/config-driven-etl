@@ -50,7 +50,12 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "-m", "not gcp"]
+addopts = [
+    "--import-mode=importlib",
+    "--strict-markers",
+    "-m",
+    "not gcp",
+]
 markers = [
     "gcp: hits a real BigQuery sandbox; run explicitly with -m gcp",
 ]
@@ -62,4 +67,6 @@ branch = true
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
 typeCheckingMode = "standard"

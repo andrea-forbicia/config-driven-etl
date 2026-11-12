@@ -256,7 +256,7 @@ Goal: an empty but installable, linted, and tested project on a protected
       request and status checks required), add topics *(manual)*
 - [x] `pyproject.toml`: metadata, version `0.1.0`, dependencies, `dev` extras,
       ruff and pytest config, `gcp` marker `[build]`
-- [ ] Scaffold `src/` and `tests/` with empty modules, `__version__`, and a
+- [x] Scaffold `src/` and `tests/` with empty modules, `__version__`, and a
       working `python -m config_driven_etl --help` `[chore]`
 - [ ] Minimal `ci.yml`: ruff check, ruff format check, unit tests `[ci]`
 - [ ] `CHANGELOG.md` with an `Unreleased` section `[docs]`
