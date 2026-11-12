@@ -376,7 +376,7 @@ Goal: every pull request is fully checked; releases are automatic.
       Docker build `[ci]`
 - [ ] GCP authentication for `gcp` tests on `main` only (Workload Identity
       Federation preferred) `[ci]`
-- [ ] `release.yml` on `v*` tags: CI, image build, GitHub Release from the
+- [x] `release.yml` on `v*` tags: CI, image build, GitHub Release from the
       changelog `[ci]`
 
 Exit: a test tag produces a GitHub Release.

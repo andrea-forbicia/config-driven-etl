@@ -190,6 +190,11 @@ and this project adheres to
   is skipped with a notice while the GCP repository secrets are missing,
   and fails, rather than skipping the tests, when credentials cannot be
   obtained.
+- Release workflow on `v*` tags: runs CI, checks that the tag is an
+  annotated tag on `main` matching the version in `pyproject.toml`,
+  builds the Docker image and checks the version it reports, then creates
+  a GitHub Release. `vX.Y.Z` takes its notes from the `[X.Y.Z]` changelog
+  section; `vX.Y.Z-<suffix>` creates a pre-release from `[Unreleased]`.
 
 ### Fixed
 
