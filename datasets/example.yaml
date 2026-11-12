@@ -15,9 +15,10 @@ name: city_weather
 source:
   # Set exactly one of url or path.
   # url: HTTP(S) address downloaded at extract time.
-  # path: local file, relative to the working directory.
+  # path: local file; a relative path starts from this file's directory.
+  # Downloaded or copied, the CSV lands in data/raw/<name>/<name>.csv.
   url: https://example.org/city_weather.csv
-  # path: data/raw/city_weather/city_weather.csv
+  # path: ../local/city_weather.csv
 
   # Field separator, a single ASCII character. Default: ",".
   # Use "\t" for tab-separated files.

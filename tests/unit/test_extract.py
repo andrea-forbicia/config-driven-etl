@@ -10,6 +10,7 @@ from config_driven_etl.extract import (
     CHUNK_SIZE,
     TIMEOUT,
     ExtractError,
+    copy_csv,
     download_csv,
     raw_csv_path,
 )
@@ -171,4 +172,81 @@ class DownloadCsvTest(unittest.TestCase):
             download_csv(URL, self.destination, session)
 
         self.assert_no_partial_files()
+        self.assertFalse(self.destination.exists())
+
+
+class CopyCsvTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.source = self.root / "local" / "input.csv"
+        self.source.parent.mkdir()
+        self.destination = self.root / "raw" / "s" / "s.csv"
+
+    def assert_no_partial_files(self) -> None:
+        if self.destination.parent.exists():
+            leftovers = list(self.destination.parent.glob("*.part"))
+            self.assertEqual(leftovers, [])
+
+    def copy_error(self, source: Path) -> str:
+        with self.assertRaises(ExtractError) as context:
+            copy_csv(source, self.destination)
+
+        self.assert_no_partial_files()
+        return str(context.exception)
+
+    def test_copies_content_and_returns_size(self) -> None:
+        self.source.write_bytes(b"a,b\n1,2\n")
+
+        size = copy_csv(self.source, self.destination)
+
+        self.assertEqual(size, 8)
+        self.assertEqual(self.destination.read_bytes(), b"a,b\n1,2\n")
+        self.assertEqual(self.source.read_bytes(), b"a,b\n1,2\n")
+        self.assert_no_partial_files()
+
+    def test_copies_files_larger_than_one_chunk(self) -> None:
+        content = b"x" * (CHUNK_SIZE + 10)
+        self.source.write_bytes(content)
+
+        size = copy_csv(self.source, self.destination)
+
+        self.assertEqual(size, len(content))
+        self.assertEqual(self.destination.read_bytes(), content)
+
+    def test_replaces_previous_file(self) -> None:
+        self.destination.parent.mkdir(parents=True)
+        self.destination.write_bytes(b"previous")
+        self.source.write_bytes(b"new")
+
+        copy_csv(self.source, self.destination)
+
+        self.assertEqual(self.destination.read_bytes(), b"new")
+
+    def test_source_is_destination(self) -> None:
+        self.destination.parent.mkdir(parents=True)
+        self.destination.write_bytes(b"same")
+
+        size = copy_csv(self.destination, self.destination)
+
+        self.assertEqual(size, 4)
+        self.assertEqual(self.destination.read_bytes(), b"same")
+
+    def test_missing_source_keeps_previous_file(self) -> None:
+        self.destination.parent.mkdir(parents=True)
+        self.destination.write_bytes(b"previous")
+        missing = self.root / "local" / "missing.csv"
+
+        message = self.copy_error(missing)
+
+        self.assertTrue(message.startswith(f"{missing}: cannot read file: "))
+        self.assertEqual(self.destination.read_bytes(), b"previous")
+
+    def test_directory_as_source(self) -> None:
+        message = self.copy_error(self.source.parent)
+
+        self.assertTrue(
+            message.startswith(f"{self.source.parent}: cannot read file: ")
+        )
         self.assertFalse(self.destination.exists())

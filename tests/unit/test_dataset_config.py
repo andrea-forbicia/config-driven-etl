@@ -577,6 +577,30 @@ class LoadDatasetConfigTest(unittest.TestCase):
         self.assertEqual(config.columns[1].max, 60.0)
         self.assertEqual(config.target.partition_by, "observation_date")
 
+    def test_relative_source_path_starts_from_config_directory(self) -> None:
+        text = VALID_YAML.replace(
+            "url: https://example.org/weather.csv", "path: ../local/w.csv"
+        )
+
+        config = load_dataset_config(self.write(text))
+
+        self.assertEqual(config.source.path, self.directory / "../local/w.csv")
+
+    def test_absolute_source_path_is_kept(self) -> None:
+        absolute = (self.directory / "w.csv").resolve()
+        text = VALID_YAML.replace(
+            "url: https://example.org/weather.csv", f"path: '{absolute}'"
+        )
+
+        config = load_dataset_config(self.write(text))
+
+        self.assertEqual(config.source.path, absolute)
+
+    def test_model_without_loader_keeps_relative_path(self) -> None:
+        source = Source.model_validate({"path": "local/w.csv"})
+
+        self.assertEqual(source.path, Path("local/w.csv"))
+
     def test_missing_file(self) -> None:
         problems = self.load_problems(self.directory / "missing.yaml")
 
