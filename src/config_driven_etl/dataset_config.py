@@ -14,6 +14,7 @@ from pydantic import (
     HttpUrl,
     StringConstraints,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -39,6 +40,9 @@ class ColumnType(StrEnum):
 NUMERIC_TYPES = frozenset({ColumnType.INT, ColumnType.FLOAT})
 TEMPORAL_TYPES = frozenset({ColumnType.DATE, ColumnType.DATETIME})
 
+# Validation context key: directory that relative source paths start from.
+_BASE_DIR = "base_dir"
+
 
 class _StrictModel(BaseModel):
     # Unknown keys are almost always typos in the YAML file.
@@ -62,6 +66,18 @@ class Source(_StrictModel):
         if value == "":
             raise ValueError("path must not be empty")
         return value
+
+    @field_validator("path")
+    @classmethod
+    def _resolve_against_config_dir(
+        cls, value: Path | None, info: ValidationInfo
+    ) -> Path | None:
+        # The loader passes the YAML file's directory, so a relative path
+        # means the same file wherever the command is run from.
+        base_dir = (info.context or {}).get(_BASE_DIR)
+        if value is None or base_dir is None or value.is_absolute():
+            return value
+        return base_dir / value
 
     @model_validator(mode="after")
     def _check_location(self) -> Self:
@@ -251,7 +267,9 @@ def load_dataset_config(path: Path) -> DatasetConfig:
         )
 
     try:
-        return DatasetConfig.model_validate(data)
+        return DatasetConfig.model_validate(
+            data, context={_BASE_DIR: path.parent}
+        )
     except ValidationError as error:
         raise DatasetConfigError(
             path, _format_validation_error(error)

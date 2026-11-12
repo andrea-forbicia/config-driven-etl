@@ -1,6 +1,8 @@
 """Download or read the raw CSV of a dataset."""
 
+import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import IO
 
@@ -25,10 +27,26 @@ def download_csv(
 ) -> int:
     """Stream url into destination and return the number of bytes written.
 
-    The file is written under a temporary name and renamed when complete,
-    so a failed download never leaves a truncated file or replaces the
-    previous one. Raises ExtractError on HTTP, timeout or network errors.
+    Raises ExtractError on HTTP, timeout or network errors; a failed
+    download never leaves a truncated file or replaces the previous one.
     """
+    return _write_atomically(
+        destination, lambda file: _stream(url, file, session)
+    )
+
+
+def copy_csv(source: Path, destination: Path) -> int:
+    """Copy a local CSV into destination and return the bytes written.
+
+    Raises ExtractError if the source cannot be read; a failed copy never
+    leaves a truncated file or replaces the previous one.
+    """
+    return _write_atomically(destination, lambda file: _copy(source, file))
+
+
+def _write_atomically(
+    destination: Path, write: Callable[[IO[bytes]], int]
+) -> int:
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Deleted when the block exits, which is a no-op after the rename and
     # removes the partial file on any error.
@@ -38,7 +56,7 @@ def download_csv(
         suffix=".part",
         delete_on_close=False,
     ) as temp_file:
-        size = _stream(url, temp_file, session)
+        size = write(temp_file)
         # Windows cannot rename a file that is still open.
         temp_file.close()
         Path(temp_file.name).replace(destination)
@@ -64,3 +82,14 @@ def _stream(url: str, file: IO[bytes], session: requests.Session) -> int:
         raise ExtractError(f"{url}: timed out") from error
     except requests.RequestException as error:
         raise ExtractError(f"{url}: download failed: {error}") from error
+
+
+def _copy(source: Path, file: IO[bytes]) -> int:
+    try:
+        source_file = source.open("rb")
+    except OSError as error:
+        reason = error.strerror or str(error)
+        raise ExtractError(f"{source}: cannot read file: {reason}") from error
+    with source_file:
+        shutil.copyfileobj(source_file, file, CHUNK_SIZE)
+    return file.tell()

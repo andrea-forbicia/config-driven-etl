@@ -50,5 +50,9 @@ and this project adheres to
   and renamed when complete, so a failed download never leaves a truncated
   file; HTTP, timeout and network errors raise `ExtractError`.
 - `requests` declared as a direct dependency.
+- Local sources: `source.path` is copied into `data/raw/<name>/<name>.csv`
+  with the same atomic write as downloads. A relative `source.path` is
+  resolved against the directory of the dataset YAML file, not the working
+  directory.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
