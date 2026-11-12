@@ -27,6 +27,9 @@ service-account*.json
 # Pipeline data, never committed
 data/
 
+# Claude Code local settings
+.claude/
+
 # Editors and OS
 .vscode/
 .idea/
