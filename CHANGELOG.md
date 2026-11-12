@@ -149,8 +149,14 @@ and this project adheres to
   counts its rows, so a CSV whose body cannot be parsed fails there;
   `transform` writes the valid rows as verified Parquet; `load` loads
   it with the row check; `run` does all three and checks the BigQuery
-  settings before downloading anything. Expected failures print one
-  message to stderr and exit with code 1.
+  settings before downloading anything. Expected failures exit with
+  code 1.
+- Structured JSON logging on stderr for `extract`, `transform`, `load`
+  and `run`: one `stage_completed` line per stage with the dataset name,
+  `rows_in`, `rows_out`, `rows_rejected`, `duration_s` and, for
+  `transform`, the rejected rows per reason; a failure is one
+  `run_failed` error line with the dataset file and the message.
+  Settings and credentials are never logged.
 
 ### Fixed
 

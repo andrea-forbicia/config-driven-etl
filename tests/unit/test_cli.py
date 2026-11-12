@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from google.api_core.exceptions import NotFound
@@ -190,6 +192,9 @@ class ValidateCommandTest(unittest.TestCase):
 
 FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
 LIBRARY = str(FIXTURES_DIR / "library_loans" / "library_loans.yaml")
+# Distinctive values, so a leak into the logs is easy to spot.
+PROJECT = "secret-project-4f1c"
+BQ_DATASET = "secret_dataset_4f1c"
 
 
 class PipelineCommandsTest(unittest.TestCase):
@@ -207,15 +212,15 @@ class PipelineCommandsTest(unittest.TestCase):
             os.environ,
             {
                 "DATA_DIR": str(self.directory / "data"),
-                "GCP_PROJECT_ID": "project",
-                "BQ_DATASET": "dataset",
+                "GCP_PROJECT_ID": PROJECT,
+                "BQ_DATASET": BQ_DATASET,
             },
             clear=True,
         )
         environment.start()
         self.addCleanup(environment.stop)
         self.client = mock.create_autospec(bigquery.Client, instance=True)
-        self.client.project = "project"
+        self.client.project = PROJECT
         self.client.__enter__.return_value = self.client
         table = mock.create_autospec(bigquery.Table, instance=True)
         table.num_rows = 4
@@ -229,6 +234,10 @@ class PipelineCommandsTest(unittest.TestCase):
 
     def invoke(self, *args: str) -> Result:
         return self.runner.invoke(app, list(args))
+
+    def events(self, result: Result) -> list[dict[str, Any]]:
+        """The JSON events a command logged, one per stderr line."""
+        return [json.loads(line) for line in result.stderr.splitlines()]
 
     def test_stages_one_by_one(self) -> None:
         data = self.directory / "data"
@@ -247,33 +256,61 @@ class PipelineCommandsTest(unittest.TestCase):
 
         load = self.invoke("load", LIBRARY)
         self.assertEqual(load.exit_code, 0, load.output)
-        self.client_factory.assert_called_once_with("project")
+        self.client_factory.assert_called_once_with(PROJECT)
 
     def test_run_executes_every_stage(self) -> None:
         result = self.invoke("run", LIBRARY)
 
         self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.stdout, "")
+        events = self.events(result)
         self.assertEqual(
-            result.stdout.splitlines(),
             [
-                "extract: library_loans: 12 rows",
-                "transform: library_loans: 4 rows, 8 rejected",
-                "load: library_loans: 4 rows",
+                (
+                    event["event"],
+                    event["stage"],
+                    event["dataset"],
+                    event["rows_in"],
+                    event["rows_out"],
+                    event["rows_rejected"],
+                )
+                for event in events
+            ],
+            [
+                ("stage_completed", "extract", "library_loans", None, 12, 0),
+                ("stage_completed", "transform", "library_loans", 12, 4, 8),
+                ("stage_completed", "load", "library_loans", 4, 4, 0),
             ],
         )
+        for event in events:
+            self.assertEqual(event["level"], "info")
+            self.assertGreaterEqual(event["duration_s"], 0)
+        self.assertEqual(sum(events[1]["rejections"].values()), 8)
         self.client.load_table_from_file.assert_called_once()
+
+    def test_logs_never_contain_settings(self) -> None:
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        for value in (PROJECT, BQ_DATASET):
+            self.assertNotIn(value, result.stderr)
 
     def test_transform_before_extract_fails(self) -> None:
         result = self.invoke("transform", LIBRARY)
 
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("cannot read CSV", result.stderr)
+        (event,) = self.events(result)
+        self.assertEqual(event["level"], "error")
+        self.assertEqual(event["event"], "run_failed")
+        self.assertEqual(event["dataset_file"], LIBRARY)
+        self.assertIn("cannot read CSV", event["error"])
 
     def test_invalid_dataset_file_fails(self) -> None:
         result = self.invoke("run", str(self.directory / "missing.yaml"))
 
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("cannot read file", result.stderr)
+        (event,) = self.events(result)
+        self.assertIn("cannot read file", event["error"])
 
     def test_run_without_settings_fails_before_extracting(self) -> None:
         del os.environ["BQ_DATASET"]
@@ -281,6 +318,7 @@ class PipelineCommandsTest(unittest.TestCase):
         result = self.invoke("run", LIBRARY)
 
         self.assertEqual(result.exit_code, 1)
-        self.assertEqual(result.stderr.strip(), "missing setting: BQ_DATASET")
+        (event,) = self.events(result)
+        self.assertEqual(event["error"], "missing setting: BQ_DATASET")
         self.assertFalse((self.directory / "data").exists())
         self.client_factory.assert_not_called()

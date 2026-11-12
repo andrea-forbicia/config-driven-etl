@@ -358,7 +358,7 @@ table state.
 Goal: a CLI and container that behave like a product.
 
 - [x] `extract`, `transform`, `load`, `run` CLI commands `[feat]`
-- [ ] Structured JSON logging, one line per stage with row counts and
+- [x] Structured JSON logging, one line per stage with row counts and
       duration `[feat]`
 - [ ] Distinct exit codes per error category, documented in `--help` `[feat]`
 - [ ] System tests on both fixture datasets, BigQuery faked `[test]`

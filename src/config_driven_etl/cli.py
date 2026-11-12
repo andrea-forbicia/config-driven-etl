@@ -1,5 +1,6 @@
 """Command-line interface."""
 
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,6 +18,11 @@ from config_driven_etl.dataset_config import (
 )
 from config_driven_etl.extract import ExtractError
 from config_driven_etl.load import LoadError
+from config_driven_etl.logging import (
+    configure_logging,
+    log_error,
+    log_event,
+)
 from config_driven_etl.pipeline import (
     StageResult,
     extract_dataset,
@@ -99,7 +105,7 @@ def _validate_file(path: Path) -> bool:
 @app.command()
 def extract(dataset: DatasetFile) -> None:
     """Download or copy the raw CSV into DATA_DIR/raw/<name>/."""
-    with _failures():
+    with _command(dataset):
         config = load_dataset_config(dataset)
         _extract(config, Settings())
 
@@ -107,7 +113,7 @@ def extract(dataset: DatasetFile) -> None:
 @app.command()
 def transform(dataset: DatasetFile) -> None:
     """Clean the raw CSV into DATA_DIR/processed/<name>/<name>.parquet."""
-    with _failures():
+    with _command(dataset):
         config = load_dataset_config(dataset)
         _transform(config, Settings())
 
@@ -115,7 +121,7 @@ def transform(dataset: DatasetFile) -> None:
 @app.command()
 def load(dataset: DatasetFile) -> None:
     """Load the processed Parquet into BigQuery, replacing the table data."""
-    with _failures():
+    with _command(dataset):
         config = load_dataset_config(dataset)
         _load(config, Settings())
 
@@ -123,7 +129,7 @@ def load(dataset: DatasetFile) -> None:
 @app.command()
 def run(dataset: DatasetFile) -> None:
     """Extract, transform and load one dataset."""
-    with _failures():
+    with _command(dataset):
         config = load_dataset_config(dataset)
         settings = Settings()
         # Checked first so a missing setting does not waste a download.
@@ -134,22 +140,25 @@ def run(dataset: DatasetFile) -> None:
 
 
 def _extract(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
     with requests.Session() as session:
         result = extract_dataset(config, settings.data_dir, session)
-    _report("extract", config, result)
+    _log_stage("extract", config, result, started)
 
 
 def _transform(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
     result = transform_dataset(config, settings.data_dir)
-    _report("transform", config, result)
+    _log_stage("transform", config, result, started)
 
 
 def _load(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
     project, dataset = _bigquery_target(settings)
     client = _bigquery_client(project)
     with client:
         result = load_dataset(config, settings.data_dir, client, dataset)
-    _report("load", config, result)
+    _log_stage("load", config, result, started)
 
 
 def _bigquery_target(settings: Settings) -> tuple[str, str]:
@@ -172,11 +181,20 @@ def _bigquery_client(project: str) -> bigquery.Client:
     return bigquery.Client(project=project)
 
 
-def _report(stage: str, config: DatasetConfig, result: StageResult) -> None:
-    line = f"{stage}: {config.name}: {result.rows_out} rows"
-    if result.rows_rejected:
-        line += f", {result.rows_rejected} rejected"
-    typer.echo(line)
+def _log_stage(
+    stage: str, config: DatasetConfig, result: StageResult, started: float
+) -> None:
+    fields: dict[str, object] = {
+        "stage": stage,
+        "dataset": config.name,
+        "rows_in": result.rows_in,
+        "rows_out": result.rows_out,
+        "rows_rejected": result.rows_rejected,
+        "duration_s": round(time.perf_counter() - started, 3),
+    }
+    if result.rejections is not None:
+        fields["rejections"] = result.rejections
+    log_event("stage_completed", **fields)
 
 
 class _SettingsError(Exception):
@@ -184,8 +202,12 @@ class _SettingsError(Exception):
 
 
 @contextmanager
-def _failures() -> Generator[None]:
-    """Print an expected failure to stderr and exit with code 1."""
+def _command(dataset_file: Path) -> Generator[None]:
+    """Log as JSON and turn an expected failure into exit code 1.
+
+    The failure is one error event; nothing else is printed.
+    """
+    configure_logging()
     try:
         yield
     except (
@@ -195,5 +217,9 @@ def _failures() -> Generator[None]:
         LoadError,
         _SettingsError,
     ) as error:
-        typer.echo(str(error), err=True)
+        log_error(
+            "run_failed",
+            dataset_file=str(dataset_file),
+            error=str(error),
+        )
         raise typer.Exit(code=1) from error
