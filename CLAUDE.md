@@ -342,7 +342,7 @@ Goal: idempotent loads into the BigQuery sandbox.
       `[feat]`
 - [x] Create the table if missing, with partitioning and clustering from the
       config `[feat]`
-- [ ] Load Parquet with a load job, explicit schema, `WRITE_TRUNCATE` `[feat]`
+- [x] Load Parquet with a load job, explicit schema, `WRITE_TRUNCATE` `[feat]`
 - [ ] Verify the loaded row count against the Parquet row count `[feat]`
 - [ ] `gcp` test: unique temporary table, deleted afterwards, skipped without
       credentials `[test]`

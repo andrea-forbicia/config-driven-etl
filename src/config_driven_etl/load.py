@@ -132,6 +132,40 @@ def ensure_table(
         )
 
 
+def load_parquet(
+    client: bigquery.Client,
+    path: Path,
+    table_id: str,
+    config: DatasetConfig,
+) -> None:
+    """Replace the table's data with a Parquet file and wait for the job.
+
+    The load job uses the schema from the config, never autodetection,
+    and WRITE_TRUNCATE, so re-running the same file leaves the same table
+    state. Partitioning and clustering are repeated on the job because
+    BigQuery checks them against the table. Raises LoadError if the file
+    cannot be read or the job fails.
+    """
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.PARQUET,
+        schema=bigquery_schema(config),
+        autodetect=False,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        time_partitioning=_time_partitioning(config),
+        clustering_fields=list(config.target.cluster_by) or None,
+    )
+    try:
+        file = path.open("rb")
+    except OSError as error:
+        reason = error.strerror or str(error)
+        raise LoadError(f"{path}: cannot read file: {reason}") from error
+    with file, _bigquery_errors(table_id):
+        job = client.load_table_from_file(
+            file, table_id, job_config=job_config
+        )
+        job.result()
+
+
 def _time_partitioning(
     config: DatasetConfig,
 ) -> bigquery.TimePartitioning | None:

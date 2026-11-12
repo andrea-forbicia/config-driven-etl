@@ -127,5 +127,10 @@ and this project adheres to
   partitioning or clustering differs from the config raises `LoadError`,
   since BigQuery cannot change them; Google API errors also become
   `LoadError`.
+- `load_parquet` replaces the table's data with a Parquet file through a
+  load job: explicit schema from the config (no autodetection),
+  `WRITE_TRUNCATE`, and the config's partitioning and clustering. It
+  waits for the job; an unreadable file or a failed job raises
+  `LoadError`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

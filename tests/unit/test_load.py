@@ -2,11 +2,12 @@ import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from typing import IO
 from unittest import mock
 
 import polars as pl
 import pyarrow.parquet as pq
-from google.api_core.exceptions import Forbidden, NotFound
+from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 from google.cloud import bigquery
 
 from config_driven_etl.dataset_config import (
@@ -18,6 +19,7 @@ from config_driven_etl.load import (
     LoadError,
     bigquery_table_id,
     ensure_table,
+    load_parquet,
     processed_parquet_path,
     verify_parquet,
     write_parquet,
@@ -441,6 +443,101 @@ class EnsureTableTest(unittest.TestCase):
                 f"{TABLE_ID}:   cause 2",
             ],
         )
+
+
+class LoadParquetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "sample.parquet"
+        self.path.write_bytes(b"parquet bytes")
+        self.client = fake_client()
+        self.job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        self.client.load_table_from_file.return_value = self.job
+
+    def job_config(self) -> bigquery.LoadJobConfig:
+        self.client.load_table_from_file.assert_called_once()
+        _, kwargs = self.client.load_table_from_file.call_args
+        return kwargs["job_config"]
+
+    def test_sends_the_file_to_the_table(self) -> None:
+        sent = []
+
+        def record(
+            file: IO[bytes], table_id: str, job_config: object
+        ) -> bigquery.LoadJob:
+            # The file is closed once load_parquet returns.
+            sent.append((file.read(), table_id))
+            return self.job
+
+        self.client.load_table_from_file.side_effect = record
+
+        load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        self.assertEqual(sent, [(b"parquet bytes", TABLE_ID)])
+
+    def test_job_uses_explicit_schema_and_truncate(self) -> None:
+        load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        job_config = self.job_config()
+        self.assertEqual(
+            job_config.source_format, bigquery.SourceFormat.PARQUET
+        )
+        self.assertFalse(job_config.autodetect)
+        self.assertEqual(
+            job_config.write_disposition,
+            bigquery.WriteDisposition.WRITE_TRUNCATE,
+        )
+        self.assertEqual(
+            job_config.schema,
+            [
+                bigquery.SchemaField("s", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("d", "DATE", mode="REQUIRED"),
+            ],
+        )
+
+    def test_job_repeats_partitioning_and_clustering(self) -> None:
+        load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        job_config = self.job_config()
+        partitioning = job_config.time_partitioning
+        assert partitioning is not None
+        self.assertEqual(partitioning.field, "d")
+        self.assertEqual(job_config.clustering_fields, ["s"])
+
+    def test_job_without_partitioning_or_clustering(self) -> None:
+        config = target_config(partition_by=None, cluster_by=())
+
+        load_parquet(self.client, self.path, TABLE_ID, config)
+
+        job_config = self.job_config()
+        self.assertIsNone(job_config.time_partitioning)
+        self.assertIsNone(job_config.clustering_fields)
+
+    def test_waits_for_the_job(self) -> None:
+        load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        self.job.result.assert_called_once_with()
+
+    def test_failed_job_raises_load_error(self) -> None:
+        self.job.result.side_effect = BadRequest("Error while reading data")
+
+        with self.assertRaises(LoadError) as context:
+            load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_ID}: BigQuery error: 400 Error while reading data",
+        )
+
+    def test_missing_file_raises_load_error(self) -> None:
+        self.path.unlink()
+
+        with self.assertRaises(LoadError) as context:
+            load_parquet(self.client, self.path, TABLE_ID, target_config())
+
+        self.assertIn("cannot read file", str(context.exception))
+        self.client.load_table_from_file.assert_not_called()
 
 
 if __name__ == "__main__":
