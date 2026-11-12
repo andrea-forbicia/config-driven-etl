@@ -228,7 +228,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 4 — Parquet**
+**Current phase: 5 — Load**
 
 How to use this plan:
 
@@ -330,7 +330,7 @@ Goal: a verified Parquet output per dataset.
 
 - [x] Write to `data/processed/<name>/` (snappy), replacing the previous run
       `[feat]`
-- [ ] Re-read and verify schema and row count after writing `[feat]`
+- [x] Re-read and verify schema and row count after writing `[feat]`
 
 Exit: both fixture datasets produce Parquet whose schema matches the config.
 

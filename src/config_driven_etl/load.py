@@ -2,9 +2,17 @@
 
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 import polars as pl
+
+from config_driven_etl.dataset_config import DatasetConfig
+from config_driven_etl.transform import output_schema
+
+
+class LoadError(Exception):
+    """Output that could not be written or does not match what was sent."""
 
 
 def processed_parquet_path(data_dir: Path, name: str) -> Path:
@@ -35,3 +43,60 @@ def write_parquet(lf: pl.LazyFrame, destination: Path) -> None:
         temp.replace(destination)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def verify_parquet(
+    path: Path, config: DatasetConfig, expected_rows: int
+) -> None:
+    """Re-read a written Parquet file and check its schema and row count.
+
+    The mapped columns must come first, in config order, with the dtypes
+    of output_schema. Any further column must be an unmapped String
+    column, allowed only when rules.drop_unmapped_columns is false.
+    Raises LoadError listing every mismatch.
+    """
+    try:
+        # Both read only the file footer, not the data.
+        actual = pl.read_parquet_schema(path)
+        rows = pl.scan_parquet(path).select(pl.len()).collect().item()
+    except (OSError, pl.exceptions.PolarsError) as error:
+        lines = str(error).splitlines()
+        reason = lines[0] if lines and lines[0] else type(error).__name__
+        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
+
+    problems = _schema_problems(config, actual)
+    if rows != expected_rows:
+        problems.append(f"{rows} rows written, expected {expected_rows}")
+    if problems:
+        raise LoadError(
+            "\n".join(f"{path}: {problem}" for problem in problems)
+        )
+
+
+def _schema_problems(
+    config: DatasetConfig, actual: Mapping[str, pl.DataType]
+) -> list[str]:
+    expected = output_schema(config)
+    problems = []
+    for name, dtype in expected.items():
+        if name not in actual:
+            problems.append(f"missing column '{name}'")
+        elif actual[name] != dtype:
+            problems.append(
+                f"column '{name}' is {actual[name]}, expected {dtype}"
+            )
+    names = list(actual)
+    # Only meaningful once every mapped column is there.
+    complete = all(name in actual for name in expected)
+    if complete and names[: len(expected)] != list(expected):
+        problems.append("mapped columns must come first, in config order")
+    for name, dtype in actual.items():
+        if name in expected:
+            continue
+        if config.rules.drop_unmapped_columns:
+            problems.append(f"unexpected column '{name}'")
+        elif dtype != pl.String:
+            problems.append(
+                f"unmapped column '{name}' is {dtype}, expected String"
+            )
+    return problems

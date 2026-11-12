@@ -2,11 +2,25 @@ import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from unittest import mock
 
 import polars as pl
 import pyarrow.parquet as pq
 
-from config_driven_etl.load import processed_parquet_path, write_parquet
+from config_driven_etl.dataset_config import (
+    DatasetConfig,
+    load_dataset_config,
+)
+from config_driven_etl.extract import scan_raw_csv
+from config_driven_etl.load import (
+    LoadError,
+    processed_parquet_path,
+    verify_parquet,
+    write_parquet,
+)
+from config_driven_etl.transform import transform
+
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 
 def typed_frame() -> pl.LazyFrame:
@@ -96,6 +110,177 @@ class WriteParquetTest(unittest.TestCase):
         written = pl.read_parquet(self.destination)
         self.assertEqual(written.height, 0)
         self.assertEqual(written.schema, typed_frame().collect_schema())
+
+
+def typed_config(drop_unmapped_columns: bool = True) -> DatasetConfig:
+    """Config whose output schema is the schema of typed_frame."""
+    types = {
+        "s": "string",
+        "i": "int",
+        "f": "float",
+        "b": "bool",
+        "d": "date",
+        "t": "datetime",
+    }
+    columns = [
+        {"source": name, "name": name, "type": type_}
+        | ({"format": "%Y-%m-%d"} if type_ in ("date", "datetime") else {})
+        for name, type_ in types.items()
+    ]
+    return DatasetConfig.model_validate(
+        {
+            "name": "sample",
+            "source": {"url": "https://example.org/sample.csv"},
+            "columns": columns,
+            "rules": {"drop_unmapped_columns": drop_unmapped_columns},
+            "target": {"table": "sample"},
+        }
+    )
+
+
+class VerifyParquetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "x.parquet"
+
+    def problems(
+        self,
+        lf: pl.LazyFrame,
+        expected_rows: int = 2,
+        config: DatasetConfig | None = None,
+    ) -> list[str]:
+        write_parquet(lf, self.path)
+        with self.assertRaises(LoadError) as context:
+            verify_parquet(self.path, config or typed_config(), expected_rows)
+        prefix = f"{self.path}: "
+        lines = str(context.exception).splitlines()
+        self.assertTrue(all(line.startswith(prefix) for line in lines))
+        return [line.removeprefix(prefix) for line in lines]
+
+    def test_accepts_matching_file(self) -> None:
+        write_parquet(typed_frame(), self.path)
+
+        verify_parquet(self.path, typed_config(), expected_rows=2)
+
+    def test_accepts_empty_file(self) -> None:
+        write_parquet(typed_frame().head(0), self.path)
+
+        verify_parquet(self.path, typed_config(), expected_rows=0)
+
+    def test_row_count_mismatch(self) -> None:
+        self.assertEqual(
+            self.problems(typed_frame(), expected_rows=3),
+            ["2 rows written, expected 3"],
+        )
+
+    def test_wrong_dtype(self) -> None:
+        lf = typed_frame().with_columns(pl.col("i").cast(pl.Int32))
+
+        self.assertEqual(
+            self.problems(lf), ["column 'i' is Int32, expected Int64"]
+        )
+
+    def test_missing_column(self) -> None:
+        self.assertEqual(
+            self.problems(typed_frame().drop("b")), ["missing column 'b'"]
+        )
+
+    def test_columns_out_of_order(self) -> None:
+        lf = typed_frame().select("i", "s", "f", "b", "d", "t")
+
+        self.assertEqual(
+            self.problems(lf),
+            ["mapped columns must come first, in config order"],
+        )
+
+    def test_unexpected_column_when_unmapped_are_dropped(self) -> None:
+        lf = typed_frame().with_columns(pl.lit("x").alias("Extra"))
+
+        self.assertEqual(self.problems(lf), ["unexpected column 'Extra'"])
+
+    def test_kept_unmapped_string_columns_are_accepted(self) -> None:
+        lf = typed_frame().with_columns(pl.lit("x").alias("Extra"))
+        write_parquet(lf, self.path)
+
+        verify_parquet(self.path, typed_config(drop_unmapped_columns=False), 2)
+
+    def test_kept_unmapped_column_must_be_a_string(self) -> None:
+        lf = typed_frame().with_columns(pl.lit(1).alias("Extra"))
+        config = typed_config(drop_unmapped_columns=False)
+
+        self.assertEqual(
+            self.problems(lf, config=config),
+            ["unmapped column 'Extra' is Int32, expected String"],
+        )
+
+    def test_unmapped_column_before_mapped_ones(self) -> None:
+        lf = typed_frame().select(pl.lit("x").alias("Extra"), pl.all())
+        config = typed_config(drop_unmapped_columns=False)
+
+        self.assertEqual(
+            self.problems(lf, config=config),
+            ["mapped columns must come first, in config order"],
+        )
+
+    def test_reports_every_problem(self) -> None:
+        lf = typed_frame().drop("b").with_columns(pl.col("i").cast(pl.Int32))
+
+        self.assertEqual(
+            self.problems(lf, expected_rows=5),
+            [
+                "column 'i' is Int32, expected Int64",
+                "missing column 'b'",
+                "2 rows written, expected 5",
+            ],
+        )
+
+    def test_missing_file(self) -> None:
+        with self.assertRaises(LoadError) as context:
+            verify_parquet(self.path, typed_config(), 0)
+
+        self.assertIn("cannot read Parquet", str(context.exception))
+
+    def test_error_without_message_names_its_type(self) -> None:
+        error = pl.exceptions.ComputeError("")
+        with (
+            mock.patch.object(pl, "read_parquet_schema", side_effect=error),
+            self.assertRaises(LoadError) as context,
+        ):
+            verify_parquet(self.path, typed_config(), 0)
+
+        self.assertEqual(
+            str(context.exception),
+            f"{self.path}: cannot read Parquet: ComputeError",
+        )
+
+    def test_corrupt_file(self) -> None:
+        self.path.write_bytes(b"not a parquet file")
+
+        with self.assertRaises(LoadError) as context:
+            verify_parquet(self.path, typed_config(), 0)
+
+        self.assertIn("cannot read Parquet", str(context.exception))
+
+
+class FixtureParquetTest(unittest.TestCase):
+    """Exit criterion: each fixture writes Parquet matching its config."""
+
+    def test_fixtures_write_verified_parquet(self) -> None:
+        for name in ("sensor_readings", "library_loans"):
+            with self.subTest(dataset=name):
+                config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
+                source = config.source
+                assert source.path is not None
+                lf = scan_raw_csv(source.path, source)
+                valid = transform(lf, config).valid.collect()
+                with tempfile.TemporaryDirectory() as directory:
+                    path = processed_parquet_path(Path(directory), name)
+
+                    write_parquet(valid.lazy(), path)
+
+                    verify_parquet(path, config, valid.height)
+                    self.assertEqual(valid.height, 4)
 
 
 if __name__ == "__main__":

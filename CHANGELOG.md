@@ -112,5 +112,10 @@ and this project adheres to
   with snappy compression. It writes under a temporary name and renames
   the file when complete, so each run replaces the previous output and a
   failed run keeps it.
+- `verify_parquet` re-reads a written file's footer and checks its row
+  count and schema against the config: mapped columns first, in config
+  order, with the dtype of each column type (`output_schema`), and any
+  further column a kept unmapped `String` column. Mismatches and
+  unreadable files raise `LoadError` listing every problem.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
