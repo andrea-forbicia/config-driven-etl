@@ -63,5 +63,10 @@ and this project adheres to
   using the configured delimiter and encoding. Values are not cleaned. A
   missing, empty or unreadable file and repeated header names raise
   `ExtractError`.
+- `select_columns` renames mapped source columns to their target names, in
+  config order, and drops unmapped columns, or keeps them after the mapped
+  ones under their source names when `drop_unmapped_columns` is `false`. A
+  missing mapped source column, or a kept column named like a target
+  column, raises `TransformError`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

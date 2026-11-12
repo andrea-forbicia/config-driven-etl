@@ -307,7 +307,7 @@ Exit: both real datasets extract locally; unit tests use no network.
 Goal: pure functions turn raw strings into typed, clean rows and report what
 they rejected.
 
-- [ ] Rename source columns to target names, drop unmapped columns, fail on a
+- [x] Rename source columns to target names, drop unmapped columns, fail on a
       missing mapped column `[feat]`
 - [ ] Cast `string`, `int`, `float`, `bool` `[feat]`
 - [ ] Parse `date` and `datetime` with the configured format `[feat]`
