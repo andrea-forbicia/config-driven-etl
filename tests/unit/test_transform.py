@@ -1,4 +1,5 @@
 import unittest
+from datetime import date, datetime
 from typing import Any
 
 import polars as pl
@@ -11,14 +12,23 @@ from config_driven_etl.transform import (
     select_columns,
 )
 
+TEMPORAL_FORMATS = {"date": "%Y-%m-%d", "datetime": "%Y-%m-%d %H:%M:%S"}
 
-def typed_config(types: dict[str, str]) -> DatasetConfig:
-    """Config whose source headers equal the target names."""
-    columns = [
-        {"source": name, "name": name, "type": type_}
-        | ({"format": "%Y-%m-%d"} if type_ in ("date", "datetime") else {})
-        for name, type_ in types.items()
-    ]
+
+def typed_config(
+    types: dict[str, str], formats: dict[str, str] | None = None
+) -> DatasetConfig:
+    """Config whose source headers equal the target names.
+
+    Temporal columns get the format from formats, or a default ISO one.
+    """
+    formats = formats or {}
+    columns = []
+    for name, type_ in types.items():
+        column = {"source": name, "name": name, "type": type_}
+        if type_ in TEMPORAL_FORMATS:
+            column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
+        columns.append(column)
     return DatasetConfig.model_validate(
         {
             "name": "sample",
@@ -223,7 +233,7 @@ class CastColumnsTest(unittest.TestCase):
                     )
 
     def test_null_and_blank_values_are_null_without_reason(self) -> None:
-        for type_ in ("int", "float", "bool"):
+        for type_ in ("int", "float", "bool", "date", "datetime"):
             with self.subTest(type=type_):
                 result = cast({"x": type_}, {"x": [None, "", "   "]})
 
@@ -236,14 +246,103 @@ class CastColumnsTest(unittest.TestCase):
 
         self.assertEqual(result["s"].to_list(), values)
 
-    def test_temporal_and_unmapped_columns_stay_strings(self) -> None:
-        lf = raw_frame({"d": ["2026-01-01"], "extra": ["5"]})
+    def test_unmapped_columns_stay_strings(self) -> None:
+        lf = raw_frame({"i": ["1"], "extra": [" 5 "]})
 
-        result = cast_columns(lf, typed_config({"d": "date"})).collect()
+        result = cast_columns(lf, typed_config({"i": "int"})).collect()
 
-        self.assertEqual(result["d"].to_list(), ["2026-01-01"])
-        self.assertEqual(result["extra"].to_list(), ["5"])
-        self.assertEqual(result[REJECTIONS].to_list(), [[]])
+        self.assertEqual(result["extra"].to_list(), [" 5 "])
+
+    def test_date_values_use_the_configured_format(self) -> None:
+        cases = {
+            "03/02/2026": date(2026, 2, 3),
+            " 03/02/2026 ": date(2026, 2, 3),
+            "29/02/2024": date(2024, 2, 29),
+            "01/01/1000": date(1000, 1, 1),
+        }
+        result = cast_columns(
+            raw_frame({"d": list(cases)}),
+            typed_config({"d": "date"}, {"d": "%d/%m/%Y"}),
+        ).collect()
+
+        self.assertEqual(result.schema["d"], pl.Date)
+        self.assertEqual(result["d"].to_list(), list(cases.values()))
+        self.assertEqual(result[REJECTIONS].to_list(), [[]] * len(cases))
+
+    def test_datetime_values_use_the_configured_format(self) -> None:
+        cases = {
+            "2026-01-01T00:00:00": datetime(2026, 1, 1),
+            "2026-12-31T23:59:59": datetime(2026, 12, 31, 23, 59, 59),
+        }
+        result = cast_columns(
+            raw_frame({"t": list(cases)}),
+            typed_config({"t": "datetime"}, {"t": "%Y-%m-%dT%H:%M:%S"}),
+        ).collect()
+
+        self.assertEqual(result.schema["t"], pl.Datetime("us"))
+        self.assertEqual(result["t"].to_list(), list(cases.values()))
+        self.assertEqual(result[REJECTIONS].to_list(), [[]] * len(cases))
+
+    def test_datetime_offsets_become_naive_utc(self) -> None:
+        values: list[str | None] = [
+            "2026-01-01T10:00:00+02:00",
+            "2026-01-01T10:00:00-0500",
+        ]
+        result = cast_columns(
+            raw_frame({"t": values}),
+            typed_config({"t": "datetime"}, {"t": "%Y-%m-%dT%H:%M:%S%z"}),
+        ).collect()
+
+        self.assertEqual(result.schema["t"], pl.Datetime("us"))
+        self.assertEqual(
+            result["t"].to_list(),
+            [datetime(2026, 1, 1, 8), datetime(2026, 1, 1, 15)],
+        )
+
+    def test_datetime_keeps_microseconds(self) -> None:
+        result = cast_columns(
+            raw_frame({"t": ["2026-01-01 00:00:00.123456"]}),
+            typed_config({"t": "datetime"}, {"t": "%Y-%m-%d %H:%M:%S%.f"}),
+        ).collect()
+
+        self.assertEqual(
+            result["t"].to_list(), [datetime(2026, 1, 1, 0, 0, 0, 123456)]
+        )
+
+    def test_malformed_temporal_values_become_null_with_a_reason(
+        self,
+    ) -> None:
+        cases = {
+            ("date", "%d/%m/%Y"): [
+                "2026-02-03",
+                "31/02/2026",
+                "29/02/2026",
+                "03/13/2026",
+                "03/02/26",
+                "03/02/999",
+                "soon",
+            ],
+            ("datetime", "%Y-%m-%dT%H:%M:%S"): [
+                "2026-01-01",
+                "2026-01-01 00:00:00",
+                "2026-01-01T25:00:00",
+                "26-01-01T00:00:00",
+                "2026-01-01T00:00:00Z",
+            ],
+        }
+        for (type_, format_), values in cases.items():
+            config = typed_config({"x": type_}, {"x": format_})
+            for value in values:
+                with self.subTest(type=type_, value=value):
+                    result = cast_columns(
+                        raw_frame({"x": [value]}), config
+                    ).collect()
+
+                    self.assertIsNone(result["x"][0])
+                    self.assertEqual(
+                        result[REJECTIONS][0].to_list(),
+                        [f"x: invalid {type_}"],
+                    )
 
     def test_collects_one_reason_per_failed_column(self) -> None:
         result = cast(
@@ -283,11 +382,16 @@ class CastColumnsTest(unittest.TestCase):
         self.assertEqual(result[REJECTIONS].to_list(), [[]])
 
     def test_empty_input(self) -> None:
-        result = cast({"i": "int", "b": "bool"}, {"i": [], "b": []})
+        result = cast(
+            {"i": "int", "b": "bool", "d": "date", "t": "datetime"},
+            {"i": [], "b": [], "d": [], "t": []},
+        )
 
         self.assertEqual(result.height, 0)
         self.assertEqual(result.schema["i"], pl.Int64)
         self.assertEqual(result.schema["b"], pl.Boolean)
+        self.assertEqual(result.schema["d"], pl.Date)
+        self.assertEqual(result.schema["t"], pl.Datetime("us"))
         self.assertEqual(result.schema[REJECTIONS], pl.List(pl.String))
 
     def test_does_not_collect_the_input(self) -> None:

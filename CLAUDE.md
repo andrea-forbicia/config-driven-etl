@@ -310,7 +310,10 @@ they rejected.
 - [x] Rename source columns to target names, drop unmapped columns, fail on a
       missing mapped column `[feat]`
 - [x] Cast `string`, `int`, `float`, `bool` `[feat]`
-- [ ] Parse `date` and `datetime` with the configured format `[feat]`
+- [x] Parse `date` and `datetime` with the configured format `[feat]`
+- [ ] Reject invalid `format` strings at config validation (unknown
+      directives, incomplete time parts), so `validate` fails before any
+      data is read `[feat]`
 - [ ] `nullable` rule `[feat]`
 - [ ] `min` / `max` range rule `[feat]`
 - [ ] `deduplicate_on` rule `[feat]`
