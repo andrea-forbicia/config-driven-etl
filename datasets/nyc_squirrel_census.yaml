@@ -1,0 +1,97 @@
+# 2018 Central Park Squirrel Census, one row per squirrel sighting.
+# Source: NYC Open Data (vfnx-vebw), NYC Open Data Terms of Use.
+name: nyc_squirrel_census
+source:
+  url: https://data.cityofnewyork.us/api/views/vfnx-vebw/rows.csv?accessType=DOWNLOAD
+columns:
+  - source: "Unique Squirrel ID"
+    name: squirrel_id
+    type: string
+    nullable: false
+  - source: "Date"
+    name: sighting_date
+    type: date
+    format: "%m%d%Y"
+    nullable: false
+  - source: "Shift"
+    name: shift
+    type: string
+  - source: "X"
+    name: longitude
+    type: float
+    min: -180
+    max: 180
+    nullable: false
+  - source: "Y"
+    name: latitude
+    type: float
+    min: -90
+    max: 90
+    nullable: false
+  - source: "Hectare"
+    name: hectare
+    type: string
+  - source: "Hectare Squirrel Number"
+    name: hectare_squirrel_number
+    type: int
+    min: 1
+  - source: "Age"
+    name: age
+    type: string
+  - source: "Primary Fur Color"
+    name: primary_fur_color
+    type: string
+  - source: "Highlight Fur Color"
+    name: highlight_fur_color
+    type: string
+  - source: "Location"
+    name: location
+    type: string
+  # "FALSE" when the squirrel is on the ground, otherwise a height in feet.
+  - source: "Above Ground Sighter Measurement"
+    name: above_ground_measurement
+    type: string
+  - source: "Running"
+    name: running
+    type: bool
+  - source: "Chasing"
+    name: chasing
+    type: bool
+  - source: "Climbing"
+    name: climbing
+    type: bool
+  - source: "Eating"
+    name: eating
+    type: bool
+  - source: "Foraging"
+    name: foraging
+    type: bool
+  - source: "Kuks"
+    name: kuks
+    type: bool
+  - source: "Quaas"
+    name: quaas
+    type: bool
+  - source: "Moans"
+    name: moans
+    type: bool
+  - source: "Tail flags"
+    name: tail_flags
+    type: bool
+  - source: "Tail twitches"
+    name: tail_twitches
+    type: bool
+  - source: "Approaches"
+    name: approaches
+    type: bool
+  - source: "Indifferent"
+    name: indifferent
+    type: bool
+  - source: "Runs from"
+    name: runs_from
+    type: bool
+rules:
+  deduplicate_on: [squirrel_id]
+  drop_unmapped_columns: true
+target:
+  table: nyc_squirrel_census
