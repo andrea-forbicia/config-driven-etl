@@ -13,6 +13,7 @@ from config_driven_etl.transform import (
     check_duplicates,
     check_nullable,
     check_range,
+    output_schema,
     select_columns,
     split_rejected,
     transform,
@@ -921,6 +922,49 @@ class TransformTest(unittest.TestCase):
         self.assertEqual(
             (valid.height, rejected.height, counts.height), (0, 0, 0)
         )
+
+
+class OutputSchemaTest(unittest.TestCase):
+    TYPES = {
+        "s": "string",
+        "i": "int",
+        "f": "float",
+        "b": "bool",
+        "d": "date",
+        "t": "datetime",
+    }
+
+    def test_one_dtype_per_type_in_config_order(self) -> None:
+        self.assertEqual(
+            output_schema(typed_config(self.TYPES)),
+            pl.Schema(
+                {
+                    "s": pl.String,
+                    "i": pl.Int64,
+                    "f": pl.Float64,
+                    "b": pl.Boolean,
+                    "d": pl.Date,
+                    "t": pl.Datetime("us"),
+                }
+            ),
+        )
+
+    def test_matches_what_transform_produces(self) -> None:
+        config = typed_config(self.TYPES)
+        lf = raw_frame(
+            {
+                "s": ["a"],
+                "i": ["1"],
+                "f": ["1.5"],
+                "b": ["true"],
+                "d": ["2026-01-02"],
+                "t": ["2026-01-02 03:04:05"],
+            }
+        )
+
+        result = transform(lf, config)
+
+        self.assertEqual(result.valid.collect_schema(), output_schema(config))
 
 
 if __name__ == "__main__":

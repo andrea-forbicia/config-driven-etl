@@ -18,9 +18,26 @@ REJECTIONS = "#rejections"
 # Earlier dates and datetimes are rejected as malformed.
 MIN_YEAR = 1000
 
+# Polars dtype that cast_columns produces for each column type.
+POLARS_TYPES: dict[ColumnType, pl.DataType] = {
+    ColumnType.STRING: pl.String(),
+    ColumnType.INT: pl.Int64(),
+    ColumnType.FLOAT: pl.Float64(),
+    ColumnType.BOOL: pl.Boolean(),
+    ColumnType.DATE: pl.Date(),
+    ColumnType.DATETIME: pl.Datetime("us"),
+}
+
 
 class TransformError(Exception):
     """Input data that does not match its dataset config."""
+
+
+def output_schema(config: DatasetConfig) -> pl.Schema:
+    """Schema of the mapped columns after transform, in config order."""
+    return pl.Schema(
+        {column.name: POLARS_TYPES[column.type] for column in config.columns}
+    )
 
 
 def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
