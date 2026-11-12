@@ -23,7 +23,8 @@ The author is building this to learn. Unless explicitly asked to implement:
 - Suggest, explain, and review; do not write whole modules unprompted.
 - When asked to implement, do one checkbox at a time and stop for review.
 - Point out design trade-offs instead of silently choosing one.
-- Never tick a checkbox yourself; the author does it after review.
+- Tick a checkbox as soon as its goal is complete (merged, or verified for a
+  manual step), in the next pull request.
 
 ## Hard constraints
 
@@ -236,22 +237,22 @@ How to use this plan:
 - One checkbox is one small pull request (or one manual step marked
   *manual*). The suggested branch type is in brackets.
 - Tests are part of every checkbox, not a separate step.
-- The author ticks `[x]` after review, in the pull request that completes the
-  box, and updates **Current phase** when an exit criterion is met.
+- Claude ticks `[x]` once a box is complete and updates **Current phase**
+  when an exit criterion is met.
 
 ### Phase 0 — Setup
 
 Goal: an empty but installable, linted, and tested project on a protected
 `main`, with CI from the first pull request.
 
-- [ ] Pick two public datasets with different shapes: direct CSV URL with no
+- [x] Pick two public datasets with different shapes: direct CSV URL with no
       login (data.gov or Socrata portals; Kaggle requires authentication),
       real dirty values, at least one `date`/`datetime` column, under ~100 MB
       *(manual)*
-- [ ] Bootstrap commit on `main`: `.gitignore`, `LICENSE`, `CLAUDE.md`,
+- [x] Bootstrap commit on `main`: `.gitignore`, `LICENSE`, `CLAUDE.md`,
       placeholder `README.md` with source and license of both datasets
       *(the only direct commit to `main`)*
-- [ ] Create the GitHub repository, push, enable branch protection (pull
+- [x] Create the GitHub repository, push, enable branch protection (pull
       request and status checks required), add topics *(manual)*
 - [ ] `pyproject.toml`: metadata, version `0.1.0`, dependencies, `dev` extras,
       ruff and pytest config, `gcp` marker `[build]`
