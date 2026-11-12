@@ -77,11 +77,41 @@ def cast_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
         casts[column.name] = typed
         reasons.append(
             pl.when(value.is_not_null() & typed.is_null()).then(
-                pl.lit(f"{column.name}: invalid {column.type}")
+                pl.lit(_invalid_reason(column))
             )
         )
     # One with_columns, so the reasons still see the raw strings.
     return lf.with_columns(_rejections(lf, reasons), **casts)
+
+
+def check_nullable(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Reject rows with a null in a column that is not nullable.
+
+    Adds '<name>: null' to the row's REJECTIONS list, unless the value
+    is null because cast_columns already rejected it as invalid, so each
+    bad value is counted once. Any non-null value is present, including
+    an empty string.
+    """
+    earlier = (
+        pl.col(REJECTIONS).fill_null([])
+        if REJECTIONS in lf.collect_schema().names()
+        else pl.lit([], dtype=pl.List(pl.String))
+    )
+    reasons: list[pl.Expr] = []
+    for column in config.columns:
+        if column.nullable:
+            continue
+        already_invalid = earlier.list.contains(_invalid_reason(column))
+        reasons.append(
+            pl.when(pl.col(column.name).is_null() & ~already_invalid).then(
+                pl.lit(f"{column.name}: null")
+            )
+        )
+    return lf.with_columns(_rejections(lf, reasons))
+
+
+def _invalid_reason(column: Column) -> str:
+    return f"{column.name}: invalid {column.type}"
 
 
 def _to_int(value: pl.Expr, column: Column) -> pl.Expr:

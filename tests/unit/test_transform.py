@@ -1,4 +1,5 @@
 import unittest
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Any
 
@@ -9,6 +10,7 @@ from config_driven_etl.transform import (
     REJECTIONS,
     TransformError,
     cast_columns,
+    check_nullable,
     select_columns,
 )
 
@@ -16,16 +18,24 @@ TEMPORAL_FORMATS = {"date": "%Y-%m-%d", "datetime": "%Y-%m-%d %H:%M:%S"}
 
 
 def typed_config(
-    types: dict[str, str], formats: dict[str, str] | None = None
+    types: dict[str, str],
+    formats: dict[str, str] | None = None,
+    required: Iterable[str] = (),
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
+    Columns in required are not nullable.
     """
     formats = formats or {}
     columns = []
     for name, type_ in types.items():
-        column = {"source": name, "name": name, "type": type_}
+        column: dict[str, Any] = {
+            "source": name,
+            "name": name,
+            "type": type_,
+            "nullable": name not in required,
+        }
         if type_ in TEMPORAL_FORMATS:
             column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
         columns.append(column)
@@ -398,6 +408,106 @@ class CastColumnsTest(unittest.TestCase):
         lf = raw_frame({"i": ["1"]})
 
         result = cast_columns(lf, typed_config({"i": "int"}))
+
+        self.assertIsInstance(result, pl.LazyFrame)
+
+
+def cast_and_check(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    required: Iterable[str],
+) -> pl.DataFrame:
+    config = typed_config(types, required=required)
+    return check_nullable(
+        cast_columns(raw_frame(data), config), config
+    ).collect()
+
+
+class CheckNullableTest(unittest.TestCase):
+    def test_rejects_nulls_in_required_columns(self) -> None:
+        for type_ in ("string", "int", "float", "bool", "date", "datetime"):
+            with self.subTest(type=type_):
+                result = cast_and_check(
+                    {"x": type_}, {"x": [None]}, required=["x"]
+                )
+
+                self.assertEqual(result[REJECTIONS].to_list(), [["x: null"]])
+
+    def test_blank_values_count_as_null_after_casting(self) -> None:
+        result = cast_and_check({"i": "int"}, {"i": ["  "]}, required=["i"])
+
+        self.assertEqual(result[REJECTIONS].to_list(), [["i: null"]])
+
+    def test_empty_strings_are_values(self) -> None:
+        result = cast_and_check(
+            {"s": "string"}, {"s": ["", "  "]}, required=["s"]
+        )
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[], []])
+
+    def test_nullable_columns_accept_nulls(self) -> None:
+        result = cast_and_check(
+            {"a": "int", "b": "string"},
+            {"a": [None], "b": ["x"]},
+            required=["b"],
+        )
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[]])
+
+    def test_invalid_value_is_rejected_once(self) -> None:
+        result = cast_and_check({"i": "int"}, {"i": ["abc"]}, required=["i"])
+
+        self.assertEqual(result[REJECTIONS].to_list(), [["i: invalid int"]])
+
+    def test_invalid_value_in_another_column_does_not_hide_null(
+        self,
+    ) -> None:
+        result = cast_and_check(
+            {"a": "int", "b": "int"},
+            {"a": ["abc"], "b": [None]},
+            required=["a", "b"],
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [["a: invalid int", "b: null"]]
+        )
+
+    def test_one_reason_per_null_column(self) -> None:
+        result = cast_and_check(
+            {"a": "string", "b": "date"},
+            {"a": [None, "x"], "b": [None, "2026-01-01"]},
+            required=["a", "b"],
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [["a: null", "b: null"], []]
+        )
+
+    def test_does_not_change_values(self) -> None:
+        result = cast_and_check(
+            {"i": "int"}, {"i": ["1", None]}, required=["i"]
+        )
+
+        self.assertEqual(result["i"].to_list(), [1, None])
+
+    def test_works_without_earlier_rejections(self) -> None:
+        lf = raw_frame({"s": ["x", None]})
+        config = typed_config({"s": "string"}, required=["s"])
+
+        result = check_nullable(lf, config).collect()
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[], ["s: null"]])
+
+    def test_empty_input(self) -> None:
+        result = cast_and_check({"i": "int"}, {"i": []}, required=["i"])
+
+        self.assertEqual(result.height, 0)
+        self.assertEqual(result.schema[REJECTIONS], pl.List(pl.String))
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"s": "string"}, required=["s"])
+
+        result = check_nullable(raw_frame({"s": ["x"]}), config)
 
         self.assertIsInstance(result, pl.LazyFrame)
 

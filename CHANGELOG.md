@@ -87,5 +87,10 @@ and this project adheres to
   `validate` before any data is read. `%f`, which misreads fractions of a
   second, and `%Z`, whose time zone name the parser ignores, are also
   rejected.
+- `check_nullable` adds the reason `<name>: null` to rows with a null in a
+  column declared `nullable: false`. A value already rejected as invalid
+  by `cast_columns` is not reported again, so each bad value is counted
+  once. Blank numeric, bool and temporal values count as null; empty
+  strings in `string` columns are values.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
