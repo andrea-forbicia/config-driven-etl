@@ -14,6 +14,7 @@ from config_driven_etl.transform import (
     check_nullable,
     check_range,
     select_columns,
+    split_rejected,
 )
 
 TEMPORAL_FORMATS = {"date": "%Y-%m-%d", "datetime": "%Y-%m-%d %H:%M:%S"}
@@ -722,6 +723,83 @@ class CheckDuplicatesTest(unittest.TestCase):
         result = check_duplicates(raw_frame({"k": ["a"]}), config)
 
         self.assertIsInstance(result, pl.LazyFrame)
+
+
+def with_reasons(
+    keys: list[str], reasons: list[list[str] | None]
+) -> pl.LazyFrame:
+    return pl.LazyFrame(
+        {"k": keys, REJECTIONS: reasons},
+        schema={"k": pl.String, REJECTIONS: pl.List(pl.String)},
+    )
+
+
+class SplitRejectedTest(unittest.TestCase):
+    def setUp(self) -> None:
+        lf = with_reasons(
+            ["a", "b", "c", "d"],
+            [[], ["x: null", "y: null"], [], ["x: null"]],
+        )
+        result = split_rejected(lf)
+        self.valid, self.rejected, self.counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+
+    def test_valid_rows_have_no_reasons_column(self) -> None:
+        self.assertEqual(self.valid.columns, ["k"])
+        self.assertEqual(self.valid["k"].to_list(), ["a", "c"])
+
+    def test_rejected_rows_keep_their_reasons(self) -> None:
+        self.assertEqual(self.rejected.columns, ["k", REJECTIONS])
+        self.assertEqual(self.rejected["k"].to_list(), ["b", "d"])
+        self.assertEqual(
+            self.rejected[REJECTIONS].to_list(),
+            [["x: null", "y: null"], ["x: null"]],
+        )
+
+    def test_counts_rows_per_reason_most_frequent_first(self) -> None:
+        self.assertEqual(self.counts.rows(), [("x: null", 2), ("y: null", 1)])
+
+    def test_counts_tie_break_on_reason(self) -> None:
+        lf = with_reasons(["a", "b"], [["z: null"], ["a: null"]])
+
+        counts = split_rejected(lf).rejection_counts.collect()
+
+        self.assertEqual(counts.rows(), [("a: null", 1), ("z: null", 1)])
+
+    def test_null_reason_list_is_valid(self) -> None:
+        result = split_rejected(with_reasons(["a"], [None]))
+
+        self.assertEqual(result.valid.collect()["k"].to_list(), ["a"])
+        self.assertEqual(result.rejected.collect().height, 0)
+
+    def test_without_reasons_column_every_row_is_valid(self) -> None:
+        result = split_rejected(raw_frame({"k": ["a", "b"]}))
+
+        self.assertEqual(result.valid.collect()["k"].to_list(), ["a", "b"])
+        self.assertEqual(result.rejected.collect().height, 0)
+        self.assertEqual(result.rejection_counts.collect().height, 0)
+
+    def test_empty_input(self) -> None:
+        result = split_rejected(with_reasons([], []))
+        valid, rejected, counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+
+        self.assertEqual(valid.schema, pl.Schema({"k": pl.String}))
+        self.assertEqual(rejected.height, 0)
+        self.assertEqual(counts.columns, ["reason", "rows"])
+        self.assertEqual(counts.height, 0)
+
+    def test_returns_lazy_frames(self) -> None:
+        result = split_rejected(with_reasons(["a"], [[]]))
+
+        for frame in (
+            result.valid,
+            result.rejected,
+            result.rejection_counts,
+        ):
+            self.assertIsInstance(frame, pl.LazyFrame)
 
 
 if __name__ == "__main__":

@@ -317,7 +317,7 @@ they rejected.
 - [x] `nullable` rule `[feat]`
 - [x] `min` / `max` range rule `[feat]`
 - [x] `deduplicate_on` rule `[feat]`
-- [ ] Split valid and rejected rows, count rejections by reason `[feat]`
+- [x] Split valid and rejected rows, count rejections by reason `[feat]`
 - [ ] Single `transform(lf, config)` entry point composing the steps
       `[refactor]`
 

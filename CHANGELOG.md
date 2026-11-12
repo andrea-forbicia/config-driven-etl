@@ -100,5 +100,9 @@ and this project adheres to
   rejected yet, the first row of each key is kept and later ones get
   `<keys>: duplicate`. Keys compare typed values (strings exactly as
   written, `0.0` equal to `-0.0`), and null key values match each other.
+- `split_rejected` returns a `TransformResult` with three lazy frames:
+  `valid` rows without the `#rejections` column, `rejected` rows with
+  their reasons, and `rejection_counts` with the number of rows per
+  reason (`reason`, `rows`), most frequent first.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

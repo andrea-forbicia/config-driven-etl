@@ -1,6 +1,7 @@
 """Generic transformation rules applied from a dataset config."""
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -165,6 +166,43 @@ def check_duplicates(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
         pl.lit(f"{', '.join(keys)}: duplicate")
     )
     return lf.with_columns(_rejections(lf, [reason]))
+
+
+@dataclass(frozen=True)
+class TransformResult:
+    """Clean rows, rejected rows and rejection counts, all lazy.
+
+    The three frames share one plan; collect them together with
+    pl.collect_all so the input is read once.
+    """
+
+    valid: pl.LazyFrame
+    rejected: pl.LazyFrame
+    rejection_counts: pl.LazyFrame
+
+
+def split_rejected(lf: pl.LazyFrame) -> TransformResult:
+    """Split rows by their REJECTIONS list and count rejections.
+
+    Valid rows have no reason and lose the REJECTIONS column; rejected
+    rows keep it. rejection_counts has one row per reason with the
+    number of rows it rejected, most frequent first, so a row with two
+    reasons counts once under each.
+    """
+    lf = lf.with_columns(_rejections(lf, []))
+    is_valid = pl.col(REJECTIONS).list.len() == 0
+    rejected = lf.filter(~is_valid)
+    counts = (
+        rejected.select(pl.col(REJECTIONS).explode().alias("reason"))
+        .group_by("reason")
+        .agg(pl.len().alias("rows"))
+        .sort(["rows", "reason"], descending=[True, False])
+    )
+    return TransformResult(
+        valid=lf.filter(is_valid).drop(REJECTIONS),
+        rejected=rejected,
+        rejection_counts=counts,
+    )
 
 
 def _invalid_reason(column: Column) -> str:
