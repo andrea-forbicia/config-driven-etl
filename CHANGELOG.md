@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-12
+
 ### Added
 
 - Project packaging with `pyproject.toml`: metadata, dependencies, `dev`
@@ -195,6 +197,8 @@ and this project adheres to
   builds the Docker image and checks the version it reports, then creates
   a GitHub Release. `vX.Y.Z` takes its notes from the `[X.Y.Z]` changelog
   section; `vX.Y.Z-<suffix>` creates a pre-release from `[Unreleased]`.
+- README: architecture diagram, setup, run (local and Docker), a sample
+  query, the sandbox expiry rules, how to add a dataset, and tests.
 
 ### Fixed
 
@@ -202,4 +206,5 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/andrea-forbicia/config-driven-etl/releases/tag/v1.0.0
