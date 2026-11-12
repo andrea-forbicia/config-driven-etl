@@ -309,7 +309,7 @@ they rejected.
 
 - [x] Rename source columns to target names, drop unmapped columns, fail on a
       missing mapped column `[feat]`
-- [ ] Cast `string`, `int`, `float`, `bool` `[feat]`
+- [x] Cast `string`, `int`, `float`, `bool` `[feat]`
 - [ ] Parse `date` and `datetime` with the configured format `[feat]`
 - [ ] `nullable` rule `[feat]`
 - [ ] `min` / `max` range rule `[feat]`
