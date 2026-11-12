@@ -311,7 +311,7 @@ they rejected.
       missing mapped column `[feat]`
 - [x] Cast `string`, `int`, `float`, `bool` `[feat]`
 - [x] Parse `date` and `datetime` with the configured format `[feat]`
-- [ ] Reject invalid `format` strings at config validation (unknown
+- [x] Reject invalid `format` strings at config validation (unknown
       directives, incomplete time parts), so `validate` fails before any
       data is read `[feat]`
 - [ ] `nullable` rule `[feat]`

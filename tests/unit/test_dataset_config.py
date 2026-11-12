@@ -346,7 +346,7 @@ class ColumnTypeOptionsTest(unittest.TestCase):
         cases = [
             ({"type": "string", "min": 0}, "string"),
             ({"type": "bool", "max": 1}, "bool"),
-            ({"type": "date", "format": "%Y", "min": 0}, "date"),
+            ({"type": "date", "format": "%Y-%m-%d", "min": 0}, "date"),
         ]
         for data, column_type in cases:
             with self.subTest(data=data):
@@ -378,6 +378,105 @@ class ColumnTypeOptionsTest(unittest.TestCase):
                     "'format' is only allowed on date and datetime "
                     f"columns, not {column_type}",
                 )
+
+    def test_valid_temporal_formats(self) -> None:
+        formats = [
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%-d/%-m/%y",
+            "%d %b %Y",
+            "%Y%m%d",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S%.fZ",
+            "%Y-%m-%dT%H:%M:%S%z",
+            "%Y-%m-%d %I:%M %p",
+            "%Y-%m-%dT%H:%M:%S%#z",
+            "%Y-%m-%d %H:%M:%S%6f",
+            "%Y-%m-%d %%Z",
+        ]
+        for column_type in ["date", "datetime"]:
+            for format_ in formats:
+                with self.subTest(type=column_type, format=format_):
+                    column = Column.model_validate(
+                        {
+                            "source": "x",
+                            "name": "x",
+                            "type": column_type,
+                            "format": format_,
+                        }
+                    )
+
+                    self.assertEqual(column.format, format_)
+
+    def test_format_with_unknown_or_incomplete_directive(self) -> None:
+        for format_ in ["%Q", "%Y-%m-%d %", "%"]:
+            for column_type in ["date", "datetime"]:
+                with self.subTest(type=column_type, format=format_):
+                    self.assertEqual(
+                        self.column_error(
+                            {"type": column_type, "format": format_}
+                        ),
+                        f"'format' {format_!r} has an unknown or "
+                        "incomplete directive",
+                    )
+
+    def test_format_rejected_by_the_parser(self) -> None:
+        for column_type in ["date", "datetime"]:
+            with self.subTest(type=column_type):
+                self.assertEqual(
+                    self.column_error(
+                        {"type": column_type, "format": "%Y-%m-%d %H"}
+                    ),
+                    f"'format' '%Y-%m-%d %H' cannot be used to read a "
+                    f"{column_type}: Invalid format string: Please either "
+                    "specify both hour and minute, or neither.",
+                )
+
+    def test_format_that_cannot_be_read_back(self) -> None:
+        cases = [("date", "%s"), ("datetime", "%Y-%m-%d %z")]
+        for column_type, format_ in cases:
+            with self.subTest(type=column_type, format=format_):
+                self.assertEqual(
+                    self.column_error(
+                        {"type": column_type, "format": format_}
+                    ),
+                    f"'format' {format_!r} cannot read back a "
+                    f"{column_type} written with it",
+                )
+
+    def test_format_with_percent_f(self) -> None:
+        for column_type in ["date", "datetime"]:
+            with self.subTest(type=column_type):
+                self.assertEqual(
+                    self.column_error(
+                        {"type": column_type, "format": "%H:%M:%S.%f"}
+                    ),
+                    "'format' '%H:%M:%S.%f' uses %f, which misreads "
+                    "fractions; use %.f or %6f",
+                )
+
+    def test_format_with_time_zone_name(self) -> None:
+        for column_type in ["date", "datetime"]:
+            with self.subTest(type=column_type):
+                self.assertEqual(
+                    self.column_error(
+                        {"type": column_type, "format": "%Y-%m-%d %Z"}
+                    ),
+                    "'format' '%Y-%m-%d %Z' uses %Z, whose time zone name "
+                    "is ignored; use %z",
+                )
+
+    def test_format_without_a_full_date(self) -> None:
+        for format_ in ["", "abc", "%Y", "%Y-%m", "%m-%d", "%H:%M:%S"]:
+            for column_type in ["date", "datetime"]:
+                with self.subTest(type=column_type, format=format_):
+                    self.assertEqual(
+                        self.column_error(
+                            {"type": column_type, "format": format_}
+                        ),
+                        f"'format' {format_!r} must include the year, "
+                        "month and day",
+                    )
 
     def test_reports_every_problem(self) -> None:
         message = self.column_error(

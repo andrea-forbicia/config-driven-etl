@@ -80,5 +80,12 @@ and this project adheres to
   Datetimes with an offset (`%z`) are converted to UTC and stored without
   a time zone, so the dtype does not depend on the format. Years before
   1000 are rejected, since `%Y` also accepts two- and three-digit years.
+- Dataset config validation checks `format` on `date` and `datetime`
+  columns: a sample date is written and read back with it, so unknown or
+  incomplete directives, formats Polars cannot parse (such as an hour
+  without minutes) and formats without a full year, month and day fail
+  `validate` before any data is read. `%f`, which misreads fractions of a
+  second, and `%Z`, whose time zone name the parser ignores, are also
+  rejected.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

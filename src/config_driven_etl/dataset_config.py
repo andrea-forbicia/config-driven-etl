@@ -1,11 +1,14 @@
 """Dataset configuration models and YAML loader."""
 
+import warnings
 from collections import Counter
 from collections.abc import Hashable, Iterable, Sequence
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
+import polars as pl
 import yaml
 from pydantic import (
     BaseModel,
@@ -123,8 +126,61 @@ class Column(_StrictModel):
                 f"'format' is only allowed on date and datetime columns, "
                 f"not {self.type}"
             )
+        if self.type in TEMPORAL_TYPES and self.format is not None:
+            reason = _format_problem(self.format, self.type)
+            if reason is not None:
+                problems.append(f"'format' {self.format!r} {reason}")
         _raise_if_any(problems)
         return self
+
+
+# Day, month, hour, minute, second and microsecond all differ, so a
+# format that drops or confuses any date part fails the round trip.
+_SAMPLE = datetime(2026, 1, 2, 3, 4, 5, 6)
+
+
+def _format_problem(format_: str, column_type: ColumnType) -> str | None:
+    """Why format cannot parse a full date, or None if it can.
+
+    The sample is written with the format and read back the way the
+    transform step reads values, so only formats Polars accepts pass.
+    """
+    # The parser reads a %Z name but ignores it, so times would be
+    # silently taken as UTC.
+    if "%Z" in format_.replace("%%", ""):
+        return "uses %Z, whose time zone name is ignored; use %z"
+    # In UTC, so offset directives such as %z can be written.
+    sample = pl.Series([_SAMPLE]).dt.replace_time_zone("UTC")
+    try:
+        # %#z can only be parsed; %z output is valid input for it.
+        text = sample.dt.strftime(format_.replace("%#z", "%z"))
+    except pl.exceptions.PolarsError:
+        return "has an unknown or incomplete directive"
+    try:
+        with warnings.catch_warnings():
+            # Polars warns about %f, which misreads "05.123456" as
+            # 123 microseconds; the round trip alone cannot see it.
+            warnings.simplefilter("error", pl.exceptions.ChronoFormatWarning)
+            parsed = _read_back(text, format_, column_type)
+    except pl.exceptions.ChronoFormatWarning:
+        return "uses %f, which misreads fractions; use %.f or %6f"
+    except pl.exceptions.ComputeError as error:
+        # These carry a useful reason, such as an hour without minutes.
+        reason = str(error).splitlines()[0]
+        return f"cannot be used to read a {column_type}: {reason}"
+    except pl.exceptions.PolarsError:
+        return f"cannot read back a {column_type} written with it"
+    if parsed.item() != _SAMPLE.date():
+        return "must include the year, month and day"
+    return None
+
+
+def _read_back(
+    text: pl.Series, format_: str, column_type: ColumnType
+) -> pl.Series:
+    if column_type is ColumnType.DATE:
+        return text.str.to_date(format_)
+    return text.str.to_datetime(format_, time_unit="us").dt.date()
 
 
 class Rules(_StrictModel):

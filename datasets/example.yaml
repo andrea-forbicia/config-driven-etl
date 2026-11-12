@@ -37,7 +37,10 @@ source:
 #   type:     string | int | float | bool | date | datetime. Required.
 #   nullable: false rejects rows where the value is empty. Default: true.
 #   format:   parse pattern, required on date and datetime columns and
-#             not allowed on other types (e.g. "%Y-%m-%d").
+#             not allowed on other types (e.g. "%Y-%m-%d"). Uses Polars
+#             (chrono) directives and must include the year, month and
+#             day. Offsets (%z) are converted to UTC. Use %.f or %6f
+#             for fractions of a second; %f and %Z are rejected.
 #   min, max: inclusive bounds on int and float columns, not allowed on
 #             other types; rows outside the range are rejected. Optional,
 #             finite numbers, min not above max.
