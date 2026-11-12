@@ -181,6 +181,10 @@ and this project adheres to
   at run time, never baked in. `.dockerignore` is an allowlist, so only
   the package sources, dataset files and metadata reach the build
   context.
+- CI also validates every file in `datasets/`, runs the system tests,
+  enforces the coverage threshold on unit and system tests together, and
+  builds the Docker image, checked by validating the dataset files inside
+  it. The workflow can be called by other workflows.
 
 ### Fixed
 

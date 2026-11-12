@@ -372,7 +372,7 @@ Exit: `docker run` executes `run` on a real dataset end to end.
 
 Goal: every pull request is fully checked; releases are automatic.
 
-- [ ] Extend `ci.yml`: validate `datasets/`, system tests, coverage threshold,
+- [x] Extend `ci.yml`: validate `datasets/`, system tests, coverage threshold,
       Docker build `[ci]`
 - [ ] GCP authentication for `gcp` tests on `main` only (Workload Identity
       Federation preferred) `[ci]`

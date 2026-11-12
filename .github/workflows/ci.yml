@@ -4,20 +4,24 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Every commit on main must get its own result.
+  # Every commit on main must get its own result: a group keeps only one
+  # pending run, so pushes are grouped per commit, not per branch.
+  group: >-
+    ci-${{ github.event_name == 'pull_request'
+    && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
-    name: Lint and unit tests
+    name: Lint and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -36,5 +40,34 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      - name: Validate dataset files
+        run: python -m config_driven_etl validate datasets
+
+      # The threshold applies to unit and system tests together, so the
+      # partial runs only collect data and coverage report enforces it.
       - name: Unit tests
-        run: pytest tests/unit
+        run: >-
+          pytest tests/unit
+          --cov=config_driven_etl --cov-report= --cov-fail-under=0
+
+      - name: System tests
+        run: >-
+          pytest tests/system
+          --cov=config_driven_etl --cov-append --cov-report=
+          --cov-fail-under=0
+
+      - name: Coverage threshold
+        run: coverage report
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t config-driven-etl .
+
+      - name: Smoke test image
+        run: docker run --rm config-driven-etl validate datasets
