@@ -162,6 +162,18 @@ class ValidateCommandTest(unittest.TestCase):
                 (line,) = result.stderr.splitlines()
                 self.assertTrue(line.startswith(f"{path}: {problem}"))
 
+    def test_fixture_datasets_are_valid(self) -> None:
+        fixtures = Path(__file__).parents[1] / "fixtures"
+        paths = [
+            str(fixtures / "sensor_readings"),
+            str(fixtures / "library_loans"),
+        ]
+
+        result = self.runner.invoke(app, ["validate", *paths])
+
+        self.assertEqual(result.exit_code, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 2)
+
     def test_committed_datasets_are_valid(self) -> None:
         result = self.runner.invoke(app, ["validate", str(DATASETS_DIR)])
 

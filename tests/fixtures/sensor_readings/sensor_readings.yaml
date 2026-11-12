@@ -1,0 +1,53 @@
+# Fixture: comma-separated sensor readings, partitioned by timestamp.
+#
+# Expected outcome per data row (header excluded); each dirty row has a
+# single problem so its rejection reason is unambiguous.
+#   1  valid
+#   2  valid
+#   3  valid       empty temperature_c, which is nullable
+#   4  rejected    measured_at: malformed datetime
+#   5  rejected    sensor_id: null in a non-nullable column
+#   6  rejected    temperature_c: 75.2 above max 60
+#   7  rejected    humidity_pct: "abc" is not an int
+#   8  rejected    duplicate reading_id r001 (row 1 is kept)
+#   9  rejected    humidity_pct: 101 above max 100
+#  10  rejected    is_online: "maybe" is not a bool
+#  11  valid       -50 and 0 on the inclusive min bounds
+# Totals: 11 rows, 4 valid, 7 rejected.
+name: sensor_readings
+source:
+  path: sensor_readings.csv
+columns:
+  - source: "Reading ID"
+    name: reading_id
+    type: string
+    nullable: false
+  - source: "Sensor"
+    name: sensor_id
+    type: string
+    nullable: false
+  - source: "Timestamp"
+    name: measured_at
+    type: datetime
+    format: "%Y-%m-%dT%H:%M:%S"
+    nullable: false
+  - source: "Temperature (C)"
+    name: temperature_c
+    type: float
+    min: -50
+    max: 60
+  - source: "Humidity"
+    name: humidity_pct
+    type: int
+    min: 0
+    max: 100
+  - source: "Online"
+    name: is_online
+    type: bool
+rules:
+  deduplicate_on: [reading_id]
+  drop_unmapped_columns: false
+target:
+  table: sensor_readings
+  partition_by: measured_at
+  cluster_by: [sensor_id]
