@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.33"]
+build-backend = "hatchling.build"
+
+[project]
+name = "config-driven-etl"
+version = "0.1.0"
+description = "Generic batch ETL from open-data CSV to BigQuery, driven by YAML."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "google-cloud-bigquery>=3.47,<4",
+    "polars>=2.1,<3",
+    "pyarrow>=26",
+    "pydantic>=2.14,<3",
+    "pydantic-settings>=2.16,<3",
+    "pyyaml>=6.0.3,<7",
+    "typer>=0.29,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.2,<10",
+    "pytest-cov>=7.1,<8",
+    "ruff==0.17.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/config_driven_etl"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "BLE",  # blind except
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-m", "not gcp"]
+markers = [
+    "gcp: hits a real BigQuery sandbox; run explicitly with -m gcp",
+]
+
+[tool.coverage.run]
+source = ["config_driven_etl"]
+branch = true
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

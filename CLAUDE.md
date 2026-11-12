@@ -254,7 +254,7 @@ Goal: an empty but installable, linted, and tested project on a protected
       *(the only direct commit to `main`)*
 - [x] Create the GitHub repository, push, enable branch protection (pull
       request and status checks required), add topics *(manual)*
-- [ ] `pyproject.toml`: metadata, version `0.1.0`, dependencies, `dev` extras,
+- [x] `pyproject.toml`: metadata, version `0.1.0`, dependencies, `dev` extras,
       ruff and pytest config, `gcp` marker `[build]`
 - [ ] Scaffold `src/` and `tests/` with empty modules, `__version__`, and a
       working `python -m config_driven_etl --help` `[chore]`
