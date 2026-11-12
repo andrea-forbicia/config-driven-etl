@@ -6,8 +6,10 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from unittest import mock
 
+import polars as pl
 import requests
 
+from config_driven_etl.dataset_config import Source
 from config_driven_etl.extract import (
     CHUNK_SIZE,
     TIMEOUT,
@@ -17,6 +19,7 @@ from config_driven_etl.extract import (
     download_csv,
     metadata_path,
     raw_csv_path,
+    scan_raw_csv,
 )
 
 URL = "https://example.org/data.csv"
@@ -383,3 +386,120 @@ class CopyCsvTest(unittest.TestCase):
         copy_csv(self.source, self.destination)
 
         self.assertFalse(meta.exists())
+
+
+class ScanRawCsvTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "raw.csv"
+
+    def scan(self, content: bytes, **source: str) -> pl.DataFrame:
+        self.path.write_bytes(content)
+        config = Source.model_validate({"path": "raw.csv", **source})
+        return scan_raw_csv(self.path, config).collect()
+
+    def scan_error(self, content: bytes | None, **source: str) -> str:
+        if content is not None:
+            self.path.write_bytes(content)
+        config = Source.model_validate({"path": "raw.csv", **source})
+        with self.assertRaises(ExtractError) as context:
+            scan_raw_csv(self.path, config)
+        return str(context.exception)
+
+    def test_every_column_is_a_string(self) -> None:
+        frame = self.scan(b"id,price,when\n1,2.5,2026-01-01\n")
+
+        self.assertEqual(
+            frame.schema,
+            pl.Schema(
+                {"id": pl.String, "price": pl.String, "when": pl.String}
+            ),
+        )
+        self.assertEqual(frame.rows(), [("1", "2.5", "2026-01-01")])
+
+    def test_returns_a_lazy_frame(self) -> None:
+        self.path.write_bytes(b"a\n1\n")
+        source = Source.model_validate({"path": "raw.csv"})
+
+        self.assertIsInstance(scan_raw_csv(self.path, source), pl.LazyFrame)
+
+    def test_uses_configured_delimiter(self) -> None:
+        for delimiter, content in [
+            (";", b'a;b\n"x;y";2\n'),
+            ("\t", b"a\tb\nx;y\t2\n"),
+        ]:
+            with self.subTest(delimiter=delimiter):
+                frame = self.scan(content, delimiter=delimiter)
+
+                self.assertEqual(frame.rows(), [("x;y", "2")])
+
+    def test_raw_values_are_not_cleaned(self) -> None:
+        frame = self.scan(b'a,b,c\n1,,"  "\n2,"",x\n')
+
+        self.assertEqual(frame.rows(), [("1", None, "  "), ("2", "", "x")])
+
+    def test_byte_order_mark_is_ignored(self) -> None:
+        frame = self.scan(b"\xef\xbb\xbfa,b\n1,2\n")
+
+        self.assertEqual(frame.columns, ["a", "b"])
+
+    def test_header_only(self) -> None:
+        frame = self.scan(b"a,b\n")
+
+        self.assertEqual((frame.columns, frame.height), (["a", "b"], 0))
+
+    def test_lossy_encoding_replaces_invalid_bytes(self) -> None:
+        frame = self.scan(b"a\ncaf\xe9\n", encoding="utf-8-lossy")
+
+        self.assertEqual(frame.rows(), [("caf\ufffd",)])
+
+    def assert_body_error_is_not_silent(self, content: bytes) -> None:
+        # Small files fail while the header is read, large ones only when
+        # the body is collected; either way the error is raised.
+        self.path.write_bytes(content)
+        source = Source.model_validate({"path": "raw.csv"})
+
+        with self.assertRaises((ExtractError, pl.exceptions.ComputeError)):
+            scan_raw_csv(self.path, source).collect()
+
+    def test_invalid_utf8_in_body_is_not_silent(self) -> None:
+        self.assert_body_error_is_not_silent(b"a\nok\ncaf\xe9\n")
+
+    def test_short_rows_are_filled_with_nulls(self) -> None:
+        frame = self.scan(b"a,b\n1,2\n3\n")
+
+        self.assertEqual(frame.rows(), [("1", "2"), ("3", None)])
+
+    def test_long_rows_are_not_silent(self) -> None:
+        self.assert_body_error_is_not_silent(b"a,b\n1,2\n3,4,5\n")
+
+    def test_repeated_header_names(self) -> None:
+        message = self.scan_error(b"a,b,a,b,c\n1,2,3,4,5\n")
+
+        self.assertEqual(
+            message,
+            f"{self.path}: repeated column name in header: 'a', 'b'",
+        )
+
+    def test_repeated_empty_header_names_are_allowed(self) -> None:
+        frame = self.scan(b"a,,\n1,2,3\n")
+
+        self.assertEqual(frame.width, 3)
+
+    def test_unreadable_files(self) -> None:
+        cases = {
+            "missing file": None,
+            "empty file": b"",
+            "invalid utf-8 header": b"caf\xe9\n1\n",
+        }
+        for case, content in cases.items():
+            with self.subTest(case=case):
+                self.path.unlink(missing_ok=True)
+
+                message = self.scan_error(content)
+
+                self.assertTrue(
+                    message.startswith(f"{self.path}: cannot read CSV: "),
+                    message,
+                )
