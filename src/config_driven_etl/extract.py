@@ -3,14 +3,18 @@
 import hashlib
 import shutil
 import tempfile
+from collections import Counter
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
+import polars as pl
 import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+from config_driven_etl.dataset_config import Source
 
 # Read is the longest wait between two chunks, not the whole download.
 TIMEOUT = (10, 60)  # (connect, read) in seconds
@@ -185,3 +189,54 @@ def _copy(source: Path, file: IO[bytes]) -> int:
     with source_file:
         shutil.copyfileobj(source_file, file, CHUNK_SIZE)
     return file.tell()
+
+
+_POLARS_ENCODINGS: dict[str, Literal["utf8", "utf8-lossy"]] = {
+    "utf-8": "utf8",
+    "utf-8-lossy": "utf8-lossy",
+}
+
+
+def scan_raw_csv(path: Path, source: Source) -> pl.LazyFrame:
+    """Lazily read a raw CSV with every column as a string.
+
+    Delimiter and encoding come from the source config. The header is read
+    now, so a missing or empty file or a repeated column name raises
+    ExtractError here. Errors in the body (invalid bytes, rows with extra
+    fields) may only surface when the frame is collected.
+    """
+    try:
+        # Without a header Polars returns the names as written; with one
+        # it silently renames duplicates.
+        header = _scan(path, source, has_header=False, n_rows=1)
+        names = header.collect().row(0)
+    except (OSError, pl.exceptions.PolarsError) as error:
+        reason = str(error).splitlines()[0] or type(error).__name__
+        raise ExtractError(f"{path}: cannot read CSV: {reason}") from error
+
+    # Empty names cannot be mapped by a config, so repeats do not matter.
+    repeated = [
+        name
+        for name, count in Counter(n for n in names if n is not None).items()
+        if count > 1
+    ]
+    if repeated:
+        listed = ", ".join(f"'{name}'" for name in repeated)
+        raise ExtractError(f"{path}: repeated column name in header: {listed}")
+    return _scan(path, source)
+
+
+def _scan(
+    path: Path,
+    source: Source,
+    has_header: bool = True,
+    n_rows: int | None = None,
+) -> pl.LazyFrame:
+    return pl.scan_csv(
+        path,
+        separator=source.delimiter,
+        encoding=_POLARS_ENCODINGS[source.encoding],
+        infer_schema=False,
+        has_header=has_header,
+        n_rows=n_rows,
+    )

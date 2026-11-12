@@ -59,5 +59,9 @@ and this project adheres to
   existing file. URL, `Last-Modified`, size and SHA-256 of each download
   are kept in `data/raw/<name>/<name>.meta.json`. ETags are not used,
   since some portals return unstable ones.
+- `scan_raw_csv` reads a raw CSV lazily with every column as a string,
+  using the configured delimiter and encoding. Values are not cleaned. A
+  missing, empty or unreadable file and repeated header names raise
+  `ExtractError`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

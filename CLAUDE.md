@@ -294,7 +294,7 @@ Goal: the raw CSV of any configured dataset lands in `data/raw/<name>/`.
 - [x] Read from `source.path` `[feat]`
 - [x] Skip the download when the file is present and unchanged (decide
       between ETag / Last-Modified and content hash) `[feat]`
-- [ ] Read the raw CSV into a `LazyFrame` with delimiter and encoding from the
+- [x] Read the raw CSV into a `LazyFrame` with delimiter and encoding from the
       config, every column as string `[feat]`
 - [ ] Fixture CSVs for two different shapes with dirty rows (nulls, malformed
       dates, out-of-range values, duplicates, extra columns) and matching YAML
