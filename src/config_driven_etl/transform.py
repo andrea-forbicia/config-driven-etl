@@ -43,34 +43,32 @@ def output_schema(config: DatasetConfig) -> pl.Schema:
 def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     """Rename mapped source columns to their target names.
 
-    Mapped columns come first, in config order. Unmapped columns are
-    dropped, or kept after them under their source names when
-    rules.drop_unmapped_columns is false. Raises TransformError if a mapped
-    source column is missing or a kept column clashes with a target name.
+    Only mapped columns are returned, in config order. Unmapped columns
+    are dropped, or fail the run when rules.drop_unmapped_columns is
+    false, which catches a source that gained columns. Raises
+    TransformError listing missing and unmapped source columns.
     """
     # Resolving the schema of a CSV scan reads only its header.
     available = lf.collect_schema().names()
     mapped = {column.source: column.name for column in config.columns}
 
+    problems = []
     missing = [source for source in mapped if source not in available]
     if missing:
-        listed = ", ".join(f"'{source}'" for source in missing)
-        raise TransformError(f"missing source column: {listed}")
-
-    kept: list[str] = []
-    if not config.rules.drop_unmapped_columns:
-        kept = [name for name in available if name not in mapped]
-        clashes = [name for name in kept if name in mapped.values()]
-        if clashes:
-            listed = ", ".join(f"'{name}'" for name in clashes)
-            raise TransformError(
-                f"unmapped source column clashes with a target name: {listed}"
-            )
+        problems.append(f"missing source column: {_quoted(missing)}")
+    unmapped = [name for name in available if name not in mapped]
+    if unmapped and not config.rules.drop_unmapped_columns:
+        problems.append(f"unmapped source column: {_quoted(unmapped)}")
+    if problems:
+        raise TransformError("\n".join(problems))
 
     return lf.select(
-        *(pl.col(source).alias(name) for source, name in mapped.items()),
-        *kept,
+        pl.col(source).alias(name) for source, name in mapped.items()
     )
+
+
+def _quoted(names: Sequence[str]) -> str:
+    return ", ".join(f"'{name}'" for name in names)
 
 
 def cast_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:

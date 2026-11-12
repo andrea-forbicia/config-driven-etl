@@ -112,7 +112,7 @@ class WriteParquetTest(unittest.TestCase):
         self.assertEqual(written.schema, typed_frame().collect_schema())
 
 
-def typed_config(drop_unmapped_columns: bool = True) -> DatasetConfig:
+def typed_config() -> DatasetConfig:
     """Config whose output schema is the schema of typed_frame."""
     types = {
         "s": "string",
@@ -132,7 +132,6 @@ def typed_config(drop_unmapped_columns: bool = True) -> DatasetConfig:
             "name": "sample",
             "source": {"url": "https://example.org/sample.csv"},
             "columns": columns,
-            "rules": {"drop_unmapped_columns": drop_unmapped_columns},
             "target": {"table": "sample"},
         }
     )
@@ -144,15 +143,10 @@ class VerifyParquetTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "x.parquet"
 
-    def problems(
-        self,
-        lf: pl.LazyFrame,
-        expected_rows: int = 2,
-        config: DatasetConfig | None = None,
-    ) -> list[str]:
+    def problems(self, lf: pl.LazyFrame, expected_rows: int = 2) -> list[str]:
         write_parquet(lf, self.path)
         with self.assertRaises(LoadError) as context:
-            verify_parquet(self.path, config or typed_config(), expected_rows)
+            verify_parquet(self.path, typed_config(), expected_rows)
         prefix = f"{self.path}: "
         lines = str(context.exception).splitlines()
         self.assertTrue(all(line.startswith(prefix) for line in lines))
@@ -190,38 +184,13 @@ class VerifyParquetTest(unittest.TestCase):
         lf = typed_frame().select("i", "s", "f", "b", "d", "t")
 
         self.assertEqual(
-            self.problems(lf),
-            ["mapped columns must come first, in config order"],
+            self.problems(lf), ["columns are not in config order"]
         )
 
-    def test_unexpected_column_when_unmapped_are_dropped(self) -> None:
+    def test_unexpected_column(self) -> None:
         lf = typed_frame().with_columns(pl.lit("x").alias("Extra"))
 
         self.assertEqual(self.problems(lf), ["unexpected column 'Extra'"])
-
-    def test_kept_unmapped_string_columns_are_accepted(self) -> None:
-        lf = typed_frame().with_columns(pl.lit("x").alias("Extra"))
-        write_parquet(lf, self.path)
-
-        verify_parquet(self.path, typed_config(drop_unmapped_columns=False), 2)
-
-    def test_kept_unmapped_column_must_be_a_string(self) -> None:
-        lf = typed_frame().with_columns(pl.lit(1).alias("Extra"))
-        config = typed_config(drop_unmapped_columns=False)
-
-        self.assertEqual(
-            self.problems(lf, config=config),
-            ["unmapped column 'Extra' is Int32, expected String"],
-        )
-
-    def test_unmapped_column_before_mapped_ones(self) -> None:
-        lf = typed_frame().select(pl.lit("x").alias("Extra"), pl.all())
-        config = typed_config(drop_unmapped_columns=False)
-
-        self.assertEqual(
-            self.problems(lf, config=config),
-            ["mapped columns must come first, in config order"],
-        )
 
     def test_reports_every_problem(self) -> None:
         lf = typed_frame().drop("b").with_columns(pl.col("i").cast(pl.Int32))

@@ -50,10 +50,8 @@ def verify_parquet(
 ) -> None:
     """Re-read a written Parquet file and check its schema and row count.
 
-    The mapped columns must come first, in config order, with the dtypes
-    of output_schema. Any further column must be an unmapped String
-    column, allowed only when rules.drop_unmapped_columns is false.
-    Raises LoadError listing every mismatch.
+    The columns must be exactly those of output_schema, in config order
+    and with its dtypes. Raises LoadError listing every mismatch.
     """
     try:
         # Both read only the file footer, not the data.
@@ -85,18 +83,12 @@ def _schema_problems(
             problems.append(
                 f"column '{name}' is {actual[name]}, expected {dtype}"
             )
-    names = list(actual)
-    # Only meaningful once every mapped column is there.
-    complete = all(name in actual for name in expected)
-    if complete and names[: len(expected)] != list(expected):
-        problems.append("mapped columns must come first, in config order")
-    for name, dtype in actual.items():
-        if name in expected:
-            continue
-        if config.rules.drop_unmapped_columns:
-            problems.append(f"unexpected column '{name}'")
-        elif dtype != pl.String:
-            problems.append(
-                f"unmapped column '{name}' is {dtype}, expected String"
-            )
+    problems += [
+        f"unexpected column '{name}'"
+        for name in actual
+        if name not in expected
+    ]
+    # Only meaningful when the same columns are there.
+    if not problems and list(actual) != list(expected):
+        problems.append("columns are not in config order")
     return problems

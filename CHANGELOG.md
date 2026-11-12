@@ -64,10 +64,10 @@ and this project adheres to
   missing, empty or unreadable file and repeated header names raise
   `ExtractError`.
 - `select_columns` renames mapped source columns to their target names, in
-  config order, and drops unmapped columns, or keeps them after the mapped
-  ones under their source names when `drop_unmapped_columns` is `false`. A
-  missing mapped source column, or a kept column named like a target
-  column, raises `TransformError`.
+  config order, and drops unmapped columns. When `drop_unmapped_columns`
+  is `false`, unmapped columns fail the run instead, as documented in
+  `datasets/example.yaml`. Missing and unmapped source columns are listed
+  in one `TransformError`.
 - `cast_columns` casts `int`, `float` and `bool` columns to `Int64`,
   `Float64` and `Boolean`; `string` values are kept as written. Numeric
   and bool values are trimmed and blank ones become null. Bools accept
@@ -113,9 +113,9 @@ and this project adheres to
   the file when complete, so each run replaces the previous output and a
   failed run keeps it.
 - `verify_parquet` re-reads a written file's footer and checks its row
-  count and schema against the config: mapped columns first, in config
-  order, with the dtype of each column type (`output_schema`), and any
-  further column a kept unmapped `String` column. Mismatches and
-  unreadable files raise `LoadError` listing every problem.
+  count and schema against the config: exactly the mapped columns, in
+  config order, with the dtype of each column type (`output_schema`).
+  Mismatches and unreadable files raise `LoadError` listing every
+  problem.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
