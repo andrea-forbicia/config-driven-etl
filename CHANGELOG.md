@@ -96,5 +96,17 @@ and this project adheres to
   whose `int` or `float` value is outside the column's inclusive `min` /
   `max` bounds. Nulls and values already rejected as invalid are not
   compared.
+- `check_duplicates` applies `rules.deduplicate_on`: among rows not
+  rejected yet, the first row of each key is kept and later ones get
+  `<keys>: duplicate`. Keys compare typed values (strings exactly as
+  written, `0.0` equal to `-0.0`), and null key values match each other.
+- `split_rejected` returns a `TransformResult` with three lazy frames:
+  `valid` rows without the `#rejections` column, `rejected` rows with
+  their reasons, and `rejection_counts` with the number of rows per
+  reason (`reason`, `rows`), most frequent first. The frames share a
+  cached plan, so collecting them with `pl.collect_all` reads the input
+  once.
+- `transform(lf, config)` runs every step in order (select, cast,
+  nullable, range, duplicates) and returns the `TransformResult`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

@@ -228,7 +228,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 3 — Transform**
+**Current phase: 4 — Parquet**
 
 How to use this plan:
 
@@ -316,9 +316,9 @@ they rejected.
       data is read `[feat]`
 - [x] `nullable` rule `[feat]`
 - [x] `min` / `max` range rule `[feat]`
-- [ ] `deduplicate_on` rule `[feat]`
-- [ ] Split valid and rejected rows, count rejections by reason `[feat]`
-- [ ] Single `transform(lf, config)` entry point composing the steps
+- [x] `deduplicate_on` rule `[feat]`
+- [x] Split valid and rejected rows, count rejections by reason `[feat]`
+- [x] Single `transform(lf, config)` entry point composing the steps
       `[refactor]`
 
 Exit: every type and rule is covered, including empty input; `transform.py`

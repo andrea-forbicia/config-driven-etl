@@ -10,9 +10,12 @@ from config_driven_etl.transform import (
     REJECTIONS,
     TransformError,
     cast_columns,
+    check_duplicates,
     check_nullable,
     check_range,
     select_columns,
+    split_rejected,
+    transform,
 )
 
 TEMPORAL_FORMATS = {"date": "%Y-%m-%d", "datetime": "%Y-%m-%d %H:%M:%S"}
@@ -23,12 +26,13 @@ def typed_config(
     formats: dict[str, str] | None = None,
     required: Iterable[str] = (),
     bounds: dict[str, dict[str, float]] | None = None,
+    deduplicate_on: Iterable[str] = (),
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
     Columns in required are not nullable; bounds maps a column to its
-    min and max keys.
+    min and max keys; deduplicate_on lists the key columns.
     """
     formats = formats or {}
     bounds = bounds or {}
@@ -49,6 +53,7 @@ def typed_config(
             "name": "sample",
             "source": {"url": "https://example.org/sample.csv"},
             "columns": columns,
+            "rules": {"deduplicate_on": list(deduplicate_on)},
             "target": {"table": "sample"},
         }
     )
@@ -623,6 +628,299 @@ class CheckRangeTest(unittest.TestCase):
         lf = cast_columns(raw_frame({"i": ["1"]}), config)
 
         self.assertIsInstance(check_range(lf, config), pl.LazyFrame)
+
+
+def dedupe(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    keys: Iterable[str],
+) -> list[list[str]]:
+    """Rejection lists after cast_columns and check_duplicates."""
+    config = typed_config(types, deduplicate_on=keys)
+    lf = cast_columns(raw_frame(data), config)
+    return check_duplicates(lf, config).collect()[REJECTIONS].to_list()
+
+
+class CheckDuplicatesTest(unittest.TestCase):
+    def test_keeps_the_first_row_of_each_key(self) -> None:
+        reasons = dedupe(
+            {"k": "string"}, {"k": ["a", "b", "a", "a", "b"]}, ["k"]
+        )
+
+        self.assertEqual(
+            reasons,
+            [[], [], ["k: duplicate"], ["k: duplicate"], ["k: duplicate"]],
+        )
+
+    def test_composite_key(self) -> None:
+        reasons = dedupe(
+            {"d": "date", "s": "string"},
+            {
+                "d": ["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-01"],
+                "s": ["x", "y", "x", "x"],
+            },
+            ["d", "s"],
+        )
+
+        self.assertEqual(reasons, [[], [], [], ["d, s: duplicate"]])
+
+    def test_compares_typed_values(self) -> None:
+        reasons = dedupe({"i": "int"}, {"i": ["1", " 1", "+1"]}, ["i"])
+
+        self.assertEqual(reasons, [[], ["i: duplicate"], ["i: duplicate"]])
+
+    def test_float_zero_and_negative_zero_match(self) -> None:
+        reasons = dedupe({"f": "float"}, {"f": ["0", "-0", "-0.0"]}, ["f"])
+
+        self.assertEqual(reasons, [[], ["f: duplicate"], ["f: duplicate"]])
+
+    def test_string_keys_keep_spaces(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": ["a", "a "]}, ["k"])
+
+        self.assertEqual(reasons, [[], []])
+
+    def test_null_keys_match_each_other(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": [None, "a", None]}, ["k"])
+
+        self.assertEqual(reasons, [[], [], ["k: duplicate"]])
+
+    def test_rejected_rows_do_not_claim_the_key(self) -> None:
+        reasons = dedupe(
+            {"k": "string", "i": "int"},
+            {"k": ["a", "a", "a"], "i": ["abc", "1", "2"]},
+            ["k"],
+        )
+
+        self.assertEqual(reasons, [["i: invalid int"], [], ["k: duplicate"]])
+
+    def test_without_keys_rejects_nothing(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": ["a", "a"]}, [])
+
+        self.assertEqual(reasons, [[], []])
+
+    def test_works_without_earlier_rejections(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+
+        result = check_duplicates(raw_frame({"k": ["a", "a"]}), config)
+
+        self.assertEqual(
+            result.collect()[REJECTIONS].to_list(), [[], ["k: duplicate"]]
+        )
+
+    def test_does_not_change_or_reorder_rows(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+        lf = raw_frame({"k": ["b", "a", "b"]})
+
+        result = check_duplicates(lf, config).collect()
+
+        self.assertEqual(result["k"].to_list(), ["b", "a", "b"])
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(dedupe({"k": "string"}, {"k": []}, ["k"]), [])
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+
+        result = check_duplicates(raw_frame({"k": ["a"]}), config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
+
+
+def with_reasons(
+    keys: list[str], reasons: list[list[str] | None]
+) -> pl.LazyFrame:
+    return pl.LazyFrame(
+        {"k": keys, REJECTIONS: reasons},
+        schema={"k": pl.String, REJECTIONS: pl.List(pl.String)},
+    )
+
+
+class SplitRejectedTest(unittest.TestCase):
+    def setUp(self) -> None:
+        lf = with_reasons(
+            ["a", "b", "c", "d"],
+            [[], ["x: null", "y: null"], [], ["x: null"]],
+        )
+        result = split_rejected(lf)
+        self.valid, self.rejected, self.counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+
+    def test_valid_rows_have_no_reasons_column(self) -> None:
+        self.assertEqual(self.valid.columns, ["k"])
+        self.assertEqual(self.valid["k"].to_list(), ["a", "c"])
+
+    def test_rejected_rows_keep_their_reasons(self) -> None:
+        self.assertEqual(self.rejected.columns, ["k", REJECTIONS])
+        self.assertEqual(self.rejected["k"].to_list(), ["b", "d"])
+        self.assertEqual(
+            self.rejected[REJECTIONS].to_list(),
+            [["x: null", "y: null"], ["x: null"]],
+        )
+
+    def test_counts_rows_per_reason_most_frequent_first(self) -> None:
+        self.assertEqual(self.counts.rows(), [("x: null", 2), ("y: null", 1)])
+
+    def test_counts_tie_break_on_reason(self) -> None:
+        lf = with_reasons(["a", "b"], [["z: null"], ["a: null"]])
+
+        counts = split_rejected(lf).rejection_counts.collect()
+
+        self.assertEqual(counts.rows(), [("a: null", 1), ("z: null", 1)])
+
+    def test_null_reason_list_is_valid(self) -> None:
+        result = split_rejected(with_reasons(["a"], [None]))
+
+        self.assertEqual(result.valid.collect()["k"].to_list(), ["a"])
+        self.assertEqual(result.rejected.collect().height, 0)
+
+    def test_without_reasons_column_every_row_is_valid(self) -> None:
+        result = split_rejected(raw_frame({"k": ["a", "b"]}))
+
+        self.assertEqual(result.valid.collect()["k"].to_list(), ["a", "b"])
+        self.assertEqual(result.rejected.collect().height, 0)
+        self.assertEqual(result.rejection_counts.collect().height, 0)
+
+    def test_empty_input(self) -> None:
+        result = split_rejected(with_reasons([], []))
+        valid, rejected, counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+
+        self.assertEqual(valid.schema, pl.Schema({"k": pl.String}))
+        self.assertEqual(rejected.height, 0)
+        self.assertEqual(counts.columns, ["reason", "rows"])
+        self.assertEqual(counts.height, 0)
+
+    def test_returns_lazy_frames(self) -> None:
+        result = split_rejected(with_reasons(["a"], [[]]))
+
+        for frame in (
+            result.valid,
+            result.rejected,
+            result.rejection_counts,
+        ):
+            self.assertIsInstance(frame, pl.LazyFrame)
+
+
+class TransformTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = DatasetConfig.model_validate(
+            {
+                "name": "sample",
+                "source": {"url": "https://example.org/sample.csv"},
+                "columns": [
+                    {
+                        "source": "ID",
+                        "name": "id",
+                        "type": "int",
+                        "nullable": False,
+                    },
+                    {
+                        "source": "Day",
+                        "name": "day",
+                        "type": "date",
+                        "format": "%d/%m/%Y",
+                    },
+                    {
+                        "source": "Score",
+                        "name": "score",
+                        "type": "float",
+                        "min": 0,
+                        "max": 10,
+                    },
+                ],
+                "rules": {"deduplicate_on": ["id"]},
+                "target": {"table": "sample"},
+            }
+        )
+        self.raw = raw_frame(
+            {
+                "ID": ["1", "2", "x", None, "1", "3", "4", "4"],
+                "Day": [
+                    "01/01/2026",
+                    "02/01/2026",
+                    "03/01/2026",
+                    "04/01/2026",
+                    "05/01/2026",
+                    "2026-01-06",
+                    "07/01/2026",
+                    "08/01/2026",
+                ],
+                "Score": ["5", "10", "1", "1", "1", "1", "11", "2"],
+                "Notes": ["n"] * 8,
+            }
+        )
+
+    def collect(self) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        result = transform(self.raw, self.config)
+        valid, rejected, counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+        return valid, rejected, counts
+
+    def test_valid_rows_are_typed_and_renamed(self) -> None:
+        valid, _, _ = self.collect()
+
+        self.assertEqual(
+            valid.schema,
+            pl.Schema({"id": pl.Int64, "day": pl.Date, "score": pl.Float64}),
+        )
+        self.assertEqual(
+            valid.rows(),
+            [
+                (1, date(2026, 1, 1), 5.0),
+                (2, date(2026, 1, 2), 10.0),
+                (4, date(2026, 1, 8), 2.0),
+            ],
+        )
+
+    def test_every_rule_rejects_its_rows(self) -> None:
+        _, rejected, _ = self.collect()
+
+        self.assertEqual(
+            rejected[REJECTIONS].to_list(),
+            [
+                ["id: invalid int"],
+                ["id: null"],
+                ["id: duplicate"],
+                ["day: invalid date"],
+                ["score: above max"],
+            ],
+        )
+
+    def test_counts_rejections_by_reason(self) -> None:
+        _, _, counts = self.collect()
+
+        self.assertEqual(
+            counts.rows(),
+            [
+                ("day: invalid date", 1),
+                ("id: duplicate", 1),
+                ("id: invalid int", 1),
+                ("id: null", 1),
+                ("score: above max", 1),
+            ],
+        )
+
+    def test_every_input_row_is_valid_or_rejected(self) -> None:
+        valid, rejected, _ = self.collect()
+
+        self.assertEqual(valid.height + rejected.height, 8)
+
+    def test_missing_source_column_fails_before_reading(self) -> None:
+        with self.assertRaises(TransformError):
+            transform(self.raw.drop("Score"), self.config)
+
+    def test_empty_input(self) -> None:
+        self.raw = self.raw.head(0)
+
+        valid, rejected, counts = self.collect()
+
+        self.assertEqual(valid.columns, ["id", "day", "score"])
+        self.assertEqual(
+            (valid.height, rejected.height, counts.height), (0, 0, 0)
+        )
 
 
 if __name__ == "__main__":

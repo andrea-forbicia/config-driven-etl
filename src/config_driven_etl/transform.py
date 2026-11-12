@@ -1,6 +1,7 @@
 """Generic transformation rules applied from a dataset config."""
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import polars as pl
 
@@ -133,6 +134,91 @@ def check_range(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
                 )
             )
     return lf.with_columns(_rejections(lf, reasons))
+
+
+def check_duplicates(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Reject repeated keys from rules.deduplicate_on.
+
+    Only rows not rejected yet take part, so this runs after the other
+    rules: the first valid row of each key is kept and later ones get
+    '<keys>: duplicate'. Keys compare typed values: strings exactly as
+    written, spaces included. Null key values match each other.
+    """
+    keys = list(config.rules.deduplicate_on)
+    if not keys:
+        return lf.with_columns(_rejections(lf, []))
+    # Without earlier rules every row is still valid.
+    valid = (
+        pl.col(REJECTIONS).fill_null([]).list.len() == 0
+        if REJECTIONS in lf.collect_schema().names()
+        else pl.lit(True)
+    )
+    types = {column.name: column.type for column in config.columns}
+    # Windows group floats bitwise, so -0.0 would differ from 0.0;
+    # adding 0.0 turns -0.0 into 0.0.
+    key_values = [
+        pl.col(key) + 0.0 if types[key] is ColumnType.FLOAT else pl.col(key)
+        for key in keys
+    ]
+    # Rejected rows sit in their own partition, so they never claim a key.
+    seen_before = pl.int_range(pl.len()).over(valid, *key_values) > 0
+    reason = pl.when(valid & seen_before).then(
+        pl.lit(f"{', '.join(keys)}: duplicate")
+    )
+    return lf.with_columns(_rejections(lf, [reason]))
+
+
+@dataclass(frozen=True)
+class TransformResult:
+    """Clean rows, rejected rows and rejection counts, all lazy.
+
+    The three frames share one plan; collect them together with
+    pl.collect_all so the input is read once.
+    """
+
+    valid: pl.LazyFrame
+    rejected: pl.LazyFrame
+    rejection_counts: pl.LazyFrame
+
+
+def split_rejected(lf: pl.LazyFrame) -> TransformResult:
+    """Split rows by their REJECTIONS list and count rejections.
+
+    Valid rows have no reason and lose the REJECTIONS column; rejected
+    rows keep it. rejection_counts has one row per reason with the
+    number of rows it rejected, most frequent first, so a row with two
+    reasons counts once under each.
+    """
+    # Cached so the valid and rejected frames share one read of the input.
+    lf = lf.with_columns(_rejections(lf, [])).cache()
+    is_valid = pl.col(REJECTIONS).list.len() == 0
+    rejected = lf.filter(~is_valid)
+    counts = (
+        rejected.select(pl.col(REJECTIONS).explode().alias("reason"))
+        .group_by("reason")
+        .agg(pl.len().alias("rows"))
+        .sort(["rows", "reason"], descending=[True, False])
+    )
+    return TransformResult(
+        valid=lf.filter(is_valid).drop(REJECTIONS),
+        rejected=rejected,
+        rejection_counts=counts,
+    )
+
+
+def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
+    """Turn raw string columns into typed, clean rows.
+
+    Applies every rule of the config and splits the result into valid
+    rows, rejected rows and rejection counts. Raises TransformError if
+    the input columns do not match the config.
+    """
+    lf = select_columns(lf, config)
+    # Duplicates come last: only rows that passed every other rule may
+    # claim a key.
+    for step in (cast_columns, check_nullable, check_range, check_duplicates):
+        lf = step(lf, config)
+    return split_rejected(lf)
 
 
 def _invalid_reason(column: Column) -> str:
