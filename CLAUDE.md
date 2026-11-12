@@ -289,7 +289,7 @@ message on each invalid fixture.
 
 Goal: the raw CSV of any configured dataset lands in `data/raw/<name>/`.
 
-- [ ] Download from `source.url` (streamed, with timeout, HTTP errors fail
+- [x] Download from `source.url` (streamed, with timeout, HTTP errors fail
       fast) `[feat]`
 - [ ] Read from `source.path` `[feat]`
 - [ ] Skip the download when the file is present and unchanged (decide

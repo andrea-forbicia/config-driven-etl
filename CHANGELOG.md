@@ -45,5 +45,10 @@ and this project adheres to
   `*.yaml` file in a directory, prints `ok: <file>` for each valid file and
   every problem to stderr, and exits with code 1 if any file is invalid or a
   directory has no dataset files.
+- Streamed download of `source.url` into `data/raw/<name>/<name>.csv`, with
+  connect and read timeouts. The file is written under a temporary name
+  and renamed when complete, so a failed download never leaves a truncated
+  file; HTTP, timeout and network errors raise `ExtractError`.
+- `requests` declared as a direct dependency.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
