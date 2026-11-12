@@ -92,5 +92,9 @@ and this project adheres to
   by `cast_columns` is not reported again, so each bad value is counted
   once. Blank numeric, bool and temporal values count as null; empty
   strings in `string` columns are values.
+- `check_range` adds `<name>: below min` or `<name>: above max` to rows
+  whose `int` or `float` value is outside the column's inclusive `min` /
+  `max` bounds. Nulls and values already rejected as invalid are not
+  compared.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

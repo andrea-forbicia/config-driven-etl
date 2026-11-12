@@ -110,6 +110,31 @@ def check_nullable(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     return lf.with_columns(_rejections(lf, reasons))
 
 
+def check_range(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Reject rows with a value outside a column's min / max bounds.
+
+    Bounds are inclusive. Adds '<name>: below min' or '<name>: above max'
+    to the row's REJECTIONS list. Nulls, including values cast_columns
+    rejected as invalid, are not compared.
+    """
+    reasons: list[pl.Expr] = []
+    for column in config.columns:
+        value = pl.col(column.name)
+        if column.min is not None:
+            reasons.append(
+                pl.when(value < column.min).then(
+                    pl.lit(f"{column.name}: below min")
+                )
+            )
+        if column.max is not None:
+            reasons.append(
+                pl.when(value > column.max).then(
+                    pl.lit(f"{column.name}: above max")
+                )
+            )
+    return lf.with_columns(_rejections(lf, reasons))
+
+
 def _invalid_reason(column: Column) -> str:
     return f"{column.name}: invalid {column.type}"
 
