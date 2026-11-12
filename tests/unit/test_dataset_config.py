@@ -12,10 +12,14 @@ from config_driven_etl.dataset_config import (
     ColumnType,
     DatasetConfig,
     DatasetConfigError,
+    Rules,
     Source,
+    Target,
     _format_yaml_error,
     load_dataset_config,
 )
+
+EXAMPLE_PATH = Path(__file__).parents[2] / "datasets" / "example.yaml"
 
 
 def minimal_config() -> dict[str, Any]:
@@ -718,3 +722,20 @@ class LoadDatasetConfigTest(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         for line in lines:
             self.assertTrue(line.startswith(f"{path}: target."))
+
+
+class ExampleDatasetConfigTest(unittest.TestCase):
+    def test_example_is_valid(self) -> None:
+        config = load_dataset_config(EXAMPLE_PATH)
+
+        self.assertEqual(
+            {column.type for column in config.columns}, set(ColumnType)
+        )
+
+    def test_example_documents_every_option(self) -> None:
+        text = EXAMPLE_PATH.read_text(encoding="utf-8")
+
+        for model in [DatasetConfig, Source, Column, Rules, Target]:
+            for field in model.model_fields:
+                with self.subTest(model=model.__name__, field=field):
+                    self.assertIn(f"{field}:", text)

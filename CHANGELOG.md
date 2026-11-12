@@ -36,5 +36,7 @@ and this project adheres to
   field paths such as `columns[2].type`. Unreadable files, invalid YAML,
   empty files, non-mapping documents and repeated keys are rejected; YAML
   errors include the line number.
+- `datasets/example.yaml`, a fictional dataset documenting every config
+  option, its allowed values and default.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
