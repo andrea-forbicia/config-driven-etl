@@ -2,10 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
+import polars as pl
 import yaml
 from pydantic import ValidationError
 
+from config_driven_etl import dataset_config
 from config_driven_etl.dataset_config import (
     TEMPORAL_TYPES,
     Column,
@@ -431,6 +434,18 @@ class ColumnTypeOptionsTest(unittest.TestCase):
                     f"{column_type}: Invalid format string: Please either "
                     "specify both hour and minute, or neither.",
                 )
+
+    def test_parser_error_without_message(self) -> None:
+        error = pl.exceptions.ComputeError("")
+        with mock.patch.object(
+            dataset_config, "_read_back", side_effect=error
+        ):
+            message = self.column_error({"type": "date", "format": "%Y-%m-%d"})
+
+        self.assertEqual(
+            message,
+            "'format' '%Y-%m-%d' cannot be used to read a date: ComputeError",
+        )
 
     def test_format_that_cannot_be_read_back(self) -> None:
         cases = [("date", "%s"), ("datetime", "%Y-%m-%d %z")]

@@ -145,4 +145,10 @@ and this project adheres to
   without `GCP_PROJECT_ID`, `BQ_DATASET` or application default
   credentials.
 
+### Fixed
+
+- An error with an empty message no longer crashes reading a raw CSV,
+  validating a date format or reading a Parquet file with an
+  `IndexError`; the message names the error type instead.
+
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

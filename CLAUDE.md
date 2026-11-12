@@ -77,6 +77,7 @@ config-driven-etl/
 │   ├── transform.py          # generic rules applied from the config
 │   ├── bq_schema.py          # config columns -> BigQuery SchemaField
 │   ├── load.py               # Parquet write, BigQuery load job
+│   ├── errors.py             # error messages and categories
 │   └── logging.py            # structured JSON logging
 ├── tests/
 │   ├── unit/                 # no I/O, no network

@@ -12,6 +12,7 @@ from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import bigquery_schema
 from config_driven_etl.dataset_config import DatasetConfig
+from config_driven_etl.errors import error_reason
 from config_driven_etl.transform import output_schema
 
 
@@ -104,8 +105,7 @@ def _read_footer(path: Path) -> tuple[dict[str, pl.DataType], int]:
         schema = pl.read_parquet_schema(path)
         rows = pl.scan_parquet(path).select(pl.len()).collect().item()
     except (OSError, pl.exceptions.PolarsError) as error:
-        lines = str(error).splitlines()
-        reason = lines[0] if lines and lines[0] else type(error).__name__
+        reason = error_reason(error)
         raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
     return schema, rows
 
@@ -247,8 +247,7 @@ def _bigquery_errors(table_id: str) -> Generator[None]:
     try:
         yield
     except GoogleAPIError as error:
-        reason = str(error).splitlines()[0] if str(error) else ""
-        lines = [f"BigQuery error: {reason or type(error).__name__}"]
+        lines = [f"BigQuery error: {error_reason(error)}"]
         # A failed load job puts the actual causes, such as the bad column,
         # in errors rather than in the message.
         details = getattr(error, "errors", None) or []

@@ -15,6 +15,7 @@ import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from config_driven_etl.dataset_config import Source
+from config_driven_etl.errors import error_reason
 
 # Read is the longest wait between two chunks, not the whole download.
 TIMEOUT = (10, 60)  # (connect, read) in seconds
@@ -211,7 +212,7 @@ def scan_raw_csv(path: Path, source: Source) -> pl.LazyFrame:
         header = _scan(path, source, has_header=False, n_rows=1)
         names = header.collect().row(0)
     except (OSError, pl.exceptions.PolarsError) as error:
-        reason = str(error).splitlines()[0] or type(error).__name__
+        reason = error_reason(error)
         raise ExtractError(f"{path}: cannot read CSV: {reason}") from error
 
     # Empty names cannot be mapped by a config, so repeats do not matter.

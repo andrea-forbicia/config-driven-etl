@@ -418,6 +418,15 @@ class ScanRawCsvTest(unittest.TestCase):
         )
         self.assertEqual(frame.rows(), [("1", "2.5", "2026-01-01")])
 
+    def test_error_without_message_names_its_type(self) -> None:
+        error = pl.exceptions.ComputeError("")
+        with mock.patch.object(pl, "scan_csv", side_effect=error):
+            message = self.scan_error(b"id\n1\n")
+
+        self.assertEqual(
+            message, f"{self.path}: cannot read CSV: ComputeError"
+        )
+
     def test_returns_a_lazy_frame(self) -> None:
         self.path.write_bytes(b"a\n1\n")
         source = Source.model_validate({"path": "raw.csv"})
