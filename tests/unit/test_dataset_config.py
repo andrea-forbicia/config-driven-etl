@@ -149,6 +149,16 @@ class DatasetConfigInvalidTest(unittest.TestCase):
 
         self.assert_invalid(data, ("columns", 0, "type"))
 
+    def test_invalid_only_column_reports_only_its_own_error(self) -> None:
+        data = minimal_config()
+        data["columns"][0]["type"] = "decimal"
+
+        with self.assertRaises(ValidationError) as context:
+            DatasetConfig.model_validate(data)
+
+        locations = [error["loc"] for error in context.exception.errors()]
+        self.assertEqual(locations, [("columns", 0, "type")])
+
     def test_unknown_key_is_rejected(self) -> None:
         data = minimal_config()
         data["columns"][0]["nulable"] = False

@@ -1,0 +1,3 @@
+# Invalid: not parseable YAML (unclosed flow sequence).
+name: invalid_yaml
+columns: [unclosed

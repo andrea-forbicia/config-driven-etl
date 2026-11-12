@@ -1,0 +1,13 @@
+# Invalid: two columns share the same target name.
+name: duplicate_target_name
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+  - source: Code
+    name: id
+    type: string
+target:
+  table: duplicate_target_name

@@ -1,0 +1,12 @@
+# Invalid: deduplicate_on references a column that is not declared.
+name: missing_column
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+rules:
+  deduplicate_on: [customer_id]
+target:
+  table: missing_column
