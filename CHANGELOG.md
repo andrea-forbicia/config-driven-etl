@@ -144,6 +144,13 @@ and this project adheres to
   sandbox's 60-day partition expiration does not drop them. Skipped
   without `GCP_PROJECT_ID`, `BQ_DATASET` or application default
   credentials.
+- `extract`, `transform`, `load` and `run` CLI commands, each taking a
+  dataset YAML file. `extract` downloads or copies the raw CSV and
+  counts its rows, so a CSV whose body cannot be parsed fails there;
+  `transform` writes the valid rows as verified Parquet; `load` loads
+  it with the row check; `run` does all three and checks the BigQuery
+  settings before downloading anything. Expected failures print one
+  message to stderr and exit with code 1.
 
 ### Fixed
 

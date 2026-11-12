@@ -77,6 +77,7 @@ config-driven-etl/
 │   ├── transform.py          # generic rules applied from the config
 │   ├── bq_schema.py          # config columns -> BigQuery SchemaField
 │   ├── load.py               # Parquet write, BigQuery load job
+│   ├── pipeline.py           # extract / transform / load stages
 │   ├── errors.py             # error messages and categories
 │   └── logging.py            # structured JSON logging
 ├── tests/
@@ -356,7 +357,7 @@ table state.
 
 Goal: a CLI and container that behave like a product.
 
-- [ ] `extract`, `transform`, `load`, `run` CLI commands `[feat]`
+- [x] `extract`, `transform`, `load`, `run` CLI commands `[feat]`
 - [ ] Structured JSON logging, one line per stage with row counts and
       duration `[feat]`
 - [ ] Distinct exit codes per error category, documented in `--help` `[feat]`

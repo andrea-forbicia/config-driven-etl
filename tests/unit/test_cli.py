@@ -1,9 +1,13 @@
+import os
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from typer.testing import CliRunner
+from google.api_core.exceptions import NotFound
+from google.cloud import bigquery
+from typer.testing import CliRunner, Result
 
 from config_driven_etl import __version__
 from config_driven_etl.cli import app
@@ -182,3 +186,101 @@ class ValidateCommandTest(unittest.TestCase):
             len(result.stdout.splitlines()),
             len(list(DATASETS_DIR.glob("*.yaml"))),
         )
+
+
+FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
+LIBRARY = str(FIXTURES_DIR / "library_loans" / "library_loans.yaml")
+
+
+class PipelineCommandsTest(unittest.TestCase):
+    """extract, transform, load and run, isolated from any real .env."""
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        # Settings reads .env from the working directory: never the repo's.
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(self.directory)
+        environment = mock.patch.dict(
+            os.environ,
+            {
+                "DATA_DIR": str(self.directory / "data"),
+                "GCP_PROJECT_ID": "project",
+                "BQ_DATASET": "dataset",
+            },
+            clear=True,
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.client = mock.create_autospec(bigquery.Client, instance=True)
+        self.client.project = "project"
+        self.client.__enter__.return_value = self.client
+        table = mock.create_autospec(bigquery.Table, instance=True)
+        table.num_rows = 4
+        table.time_partitioning = None
+        self.client.get_table.side_effect = [NotFound("no table"), table]
+        factory = mock.patch(
+            "config_driven_etl.cli._bigquery_client", return_value=self.client
+        )
+        self.client_factory = factory.start()
+        self.addCleanup(factory.stop)
+
+    def invoke(self, *args: str) -> Result:
+        return self.runner.invoke(app, list(args))
+
+    def test_stages_one_by_one(self) -> None:
+        data = self.directory / "data"
+
+        extract = self.invoke("extract", LIBRARY)
+        self.assertEqual(extract.exit_code, 0, extract.output)
+        self.assertTrue((data / "raw" / "library_loans").is_dir())
+
+        transform = self.invoke("transform", LIBRARY)
+        self.assertEqual(transform.exit_code, 0, transform.output)
+        self.assertTrue(
+            (
+                data / "processed" / "library_loans" / "library_loans.parquet"
+            ).is_file()
+        )
+
+        load = self.invoke("load", LIBRARY)
+        self.assertEqual(load.exit_code, 0, load.output)
+        self.client_factory.assert_called_once_with("project")
+
+    def test_run_executes_every_stage(self) -> None:
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "extract: library_loans: 12 rows",
+                "transform: library_loans: 4 rows, 8 rejected",
+                "load: library_loans: 4 rows",
+            ],
+        )
+        self.client.load_table_from_file.assert_called_once()
+
+    def test_transform_before_extract_fails(self) -> None:
+        result = self.invoke("transform", LIBRARY)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("cannot read CSV", result.stderr)
+
+    def test_invalid_dataset_file_fails(self) -> None:
+        result = self.invoke("run", str(self.directory / "missing.yaml"))
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("cannot read file", result.stderr)
+
+    def test_run_without_settings_fails_before_extracting(self) -> None:
+        del os.environ["BQ_DATASET"]
+
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(result.stderr.strip(), "missing setting: BQ_DATASET")
+        self.assertFalse((self.directory / "data").exists())
+        self.client_factory.assert_not_called()
