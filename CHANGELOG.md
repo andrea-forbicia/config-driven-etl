@@ -108,5 +108,9 @@ and this project adheres to
   once.
 - `transform(lf, config)` runs every step in order (select, cast,
   nullable, range, duplicates) and returns the `TransformResult`.
+- `write_parquet` streams a frame to `data/processed/<name>/<name>.parquet`
+  with snappy compression. It writes under a temporary name and renames
+  the file when complete, so each run replaces the previous output and a
+  failed run keeps it.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

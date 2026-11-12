@@ -328,7 +328,7 @@ does no I/O.
 
 Goal: a verified Parquet output per dataset.
 
-- [ ] Write to `data/processed/<name>/` (snappy), replacing the previous run
+- [x] Write to `data/processed/<name>/` (snappy), replacing the previous run
       `[feat]`
 - [ ] Re-read and verify schema and row count after writing `[feat]`
 
