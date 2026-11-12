@@ -314,7 +314,7 @@ they rejected.
 - [x] Reject invalid `format` strings at config validation (unknown
       directives, incomplete time parts), so `validate` fails before any
       data is read `[feat]`
-- [ ] `nullable` rule `[feat]`
+- [x] `nullable` rule `[feat]`
 - [ ] `min` / `max` range rule `[feat]`
 - [ ] `deduplicate_on` rule `[feat]`
 - [ ] Split valid and rejected rows, count rejections by reason `[feat]`
