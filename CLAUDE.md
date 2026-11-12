@@ -271,7 +271,7 @@ pull request.
 
 Goal: any YAML file can be validated without touching data.
 
-- [ ] Pydantic models (`Source`, `Column`, `Rules`, `Target`,
+- [x] Pydantic models (`Source`, `Column`, `Rules`, `Target`,
       `DatasetConfig`) with a closed column type enum `[feat]`
 - [ ] Cross-field validation: exactly one of `url` / `path`; unique target
       names; `partition_by`, `cluster_by`, `deduplicate_on` reference existing

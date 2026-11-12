@@ -5,9 +5,11 @@ from typing import Any
 from pydantic import ValidationError
 
 from config_driven_etl.dataset_config import (
+    TEMPORAL_TYPES,
     Column,
     ColumnType,
     DatasetConfig,
+    Source,
 )
 
 
@@ -102,9 +104,12 @@ class DatasetConfigValidTest(unittest.TestCase):
     def test_every_column_type_is_accepted(self) -> None:
         for column_type in ColumnType:
             with self.subTest(column_type=column_type):
-                column = Column.model_validate(
-                    {"source": "x", "name": "x", "type": column_type.value}
-                )
+                data = {"source": "x", "name": "x", "type": column_type.value}
+                if column_type in TEMPORAL_TYPES:
+                    data["format"] = "%Y-%m-%d"
+
+                column = Column.model_validate(data)
+
                 self.assertIs(column.type, column_type)
 
     def test_source_header_is_free_text(self) -> None:
@@ -264,3 +269,245 @@ class DatasetConfigInvalidTest(unittest.TestCase):
                 del data[key]
 
                 self.assert_invalid(data, (key,))
+
+
+def error_message(context: Any) -> str:
+    """Return the single model-level message, without pydantic's prefix."""
+    (error,) = context.exception.errors()
+    return error["msg"].removeprefix("Value error, ")
+
+
+class SourceLocationTest(unittest.TestCase):
+    def test_url_or_path_alone_is_valid(self) -> None:
+        for data in [
+            {"url": "https://example.org/data.csv"},
+            {"path": "data/raw/data.csv"},
+        ]:
+            with self.subTest(data=data):
+                Source.model_validate(data)
+
+    def test_both_or_neither_is_invalid(self) -> None:
+        for data in [
+            {},
+            {"url": "https://example.org/data.csv", "path": "data.csv"},
+        ]:
+            with self.subTest(data=data):
+                with self.assertRaises(ValidationError) as context:
+                    Source.model_validate(data)
+
+                self.assertEqual(
+                    error_message(context),
+                    "set exactly one of 'url' or 'path'",
+                )
+
+
+class ColumnTypeOptionsTest(unittest.TestCase):
+    def column_error(self, data: dict[str, Any]) -> str:
+        with self.assertRaises(ValidationError) as context:
+            Column.model_validate({"source": "x", "name": "x", **data})
+
+        return error_message(context)
+
+    def test_bounds_on_numeric_columns(self) -> None:
+        for column_type in ["int", "float"]:
+            with self.subTest(column_type=column_type):
+                column = Column.model_validate(
+                    {
+                        "source": "x",
+                        "name": "x",
+                        "type": column_type,
+                        "min": 0,
+                        "max": 0,
+                    }
+                )
+
+                self.assertEqual((column.min, column.max), (0.0, 0.0))
+
+    def test_bounds_on_non_numeric_columns(self) -> None:
+        cases = [
+            ({"type": "string", "min": 0}, "string"),
+            ({"type": "bool", "max": 1}, "bool"),
+            ({"type": "date", "format": "%Y", "min": 0}, "date"),
+        ]
+        for data, column_type in cases:
+            with self.subTest(data=data):
+                self.assertEqual(
+                    self.column_error(data),
+                    "'min' and 'max' are only allowed on int and float "
+                    f"columns, not {column_type}",
+                )
+
+    def test_min_greater_than_max(self) -> None:
+        self.assertEqual(
+            self.column_error({"type": "int", "min": 10, "max": 1}),
+            "'min' (10.0) must not exceed 'max' (1.0)",
+        )
+
+    def test_format_required_on_temporal_columns(self) -> None:
+        for column_type in ["date", "datetime"]:
+            with self.subTest(column_type=column_type):
+                self.assertEqual(
+                    self.column_error({"type": column_type}),
+                    f"'format' is required on {column_type} columns",
+                )
+
+    def test_format_on_non_temporal_columns(self) -> None:
+        for column_type in ["string", "int", "float", "bool"]:
+            with self.subTest(column_type=column_type):
+                self.assertEqual(
+                    self.column_error({"type": column_type, "format": "%Y"}),
+                    "'format' is only allowed on date and datetime "
+                    f"columns, not {column_type}",
+                )
+
+    def test_reports_every_problem(self) -> None:
+        message = self.column_error(
+            {"type": "string", "format": "%Y", "min": 2, "max": 1}
+        )
+
+        self.assertEqual(len(message.splitlines()), 3)
+
+
+class DatasetConfigReferencesTest(unittest.TestCase):
+    def config_error(self, data: dict[str, Any]) -> str:
+        with self.assertRaises(ValidationError) as context:
+            DatasetConfig.model_validate(data)
+
+        return error_message(context)
+
+    def test_duplicate_column_name(self) -> None:
+        data = minimal_config()
+        data["columns"].append(
+            {"source": "Other", "name": "id", "type": "int"}
+        )
+
+        self.assertEqual(
+            self.config_error(data),
+            "columns: name 'id' is used more than once",
+        )
+
+    def test_duplicate_source_header(self) -> None:
+        data = minimal_config()
+        data["columns"].append({"source": "Id", "name": "id2", "type": "int"})
+
+        self.assertEqual(
+            self.config_error(data),
+            "columns: source 'Id' is mapped more than once",
+        )
+
+    def test_duplicate_reported_once(self) -> None:
+        data = minimal_config()
+        data["columns"] += [
+            {"source": f"Id{i}", "name": "id", "type": "int"} for i in range(2)
+        ]
+
+        self.assertEqual(
+            self.config_error(data),
+            "columns: name 'id' is used more than once",
+        )
+
+    def test_unknown_partition_column(self) -> None:
+        data = minimal_config()
+        data["target"]["partition_by"] = "missing"
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.partition_by: 'missing' is not a column",
+        )
+
+    def test_partition_column_must_be_temporal(self) -> None:
+        data = minimal_config()
+        data["target"]["partition_by"] = "id"
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.partition_by: 'id' must be a date or datetime column, "
+            "not int",
+        )
+
+    def test_datetime_partition_column(self) -> None:
+        data = minimal_config()
+        data["columns"].append(
+            {
+                "source": "When",
+                "name": "observed_at",
+                "type": "datetime",
+                "format": "%Y-%m-%dT%H:%M:%S",
+            }
+        )
+        data["target"]["partition_by"] = "observed_at"
+
+        config = DatasetConfig.model_validate(data)
+
+        self.assertEqual(config.target.partition_by, "observed_at")
+
+    def test_unknown_or_repeated_list_references(self) -> None:
+        cases = [
+            ("target", "cluster_by", ["missing"], "'missing' is not a column"),
+            (
+                "target",
+                "cluster_by",
+                ["id", "id"],
+                "'id' is listed more than once",
+            ),
+            (
+                "rules",
+                "deduplicate_on",
+                ["missing"],
+                "'missing' is not a column",
+            ),
+            (
+                "rules",
+                "deduplicate_on",
+                ["id", "id"],
+                "'id' is listed more than once",
+            ),
+        ]
+        for section, key, value, text in cases:
+            with self.subTest(key=key, value=value):
+                data = minimal_config()
+                data.setdefault(section, {})[key] = value
+
+                self.assertEqual(
+                    self.config_error(data), f"{section}.{key}: {text}"
+                )
+
+    def test_float_cluster_column(self) -> None:
+        data = minimal_config()
+        data["columns"].append(
+            {"source": "Temp", "name": "temperature", "type": "float"}
+        )
+        data["target"]["cluster_by"] = ["temperature"]
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.cluster_by: 'temperature' must not be a float column",
+        )
+
+    def test_float_column_allowed_in_deduplicate_on(self) -> None:
+        data = minimal_config()
+        data["columns"].append(
+            {"source": "Temp", "name": "temperature", "type": "float"}
+        )
+        data["rules"] = {"deduplicate_on": ["temperature"]}
+
+        config = DatasetConfig.model_validate(data)
+
+        self.assertEqual(config.rules.deduplicate_on, ("temperature",))
+
+    def test_reports_every_problem_in_order(self) -> None:
+        data = minimal_config()
+        data["columns"].append({"source": "Id", "name": "id", "type": "int"})
+        data["target"].update(partition_by="missing", cluster_by=["nope"])
+        data["rules"] = {"deduplicate_on": ["id", "id"]}
+
+        self.assertEqual(
+            self.config_error(data).splitlines(),
+            [
+                "columns: name 'id' is used more than once",
+                "columns: source 'Id' is mapped more than once",
+                "target.partition_by: 'missing' is not a column",
+                "target.cluster_by: 'nope' is not a column",
+                "rules.deduplicate_on: 'id' is listed more than once",
+            ],
+        )
