@@ -2,11 +2,15 @@
 
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import polars as pl
+from google.api_core.exceptions import GoogleAPIError, NotFound
+from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import bigquery_schema
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.transform import output_schema
 
@@ -92,3 +96,101 @@ def _schema_problems(
     if not problems and list(actual) != list(expected):
         problems.append("columns are not in config order")
     return problems
+
+
+def bigquery_table_id(project: str, dataset: str, table: str) -> str:
+    """Return the fully qualified id of a BigQuery table."""
+    return f"{project}.{dataset}.{table}"
+
+
+def ensure_table(
+    client: bigquery.Client, table_id: str, config: DatasetConfig
+) -> None:
+    """Create the target table if it does not exist yet.
+
+    A new table gets the config's schema, day partitioning on
+    target.partition_by and clustering on target.cluster_by. An existing
+    table keeps its schema, which each load replaces, but BigQuery cannot
+    change its partitioning or clustering, so a mismatch raises LoadError.
+    """
+    with _bigquery_errors(table_id):
+        try:
+            existing = client.get_table(table_id)
+        except NotFound:
+            table = bigquery.Table(table_id, schema=bigquery_schema(config))
+            table.time_partitioning = _time_partitioning(config)
+            table.clustering_fields = list(config.target.cluster_by) or None
+            # Another run may create it between the two calls.
+            client.create_table(table, exists_ok=True)
+            return
+
+    problems = _layout_problems(existing, config)
+    if problems:
+        raise LoadError(
+            "\n".join(f"{table_id}: {problem}" for problem in problems)
+            + f"\n{table_id}: delete the table to recreate it"
+        )
+
+
+def _time_partitioning(
+    config: DatasetConfig,
+) -> bigquery.TimePartitioning | None:
+    field = config.target.partition_by
+    if field is None:
+        return None
+    return bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.DAY, field=field
+    )
+
+
+def _layout_problems(
+    table: bigquery.Table, config: DatasetConfig
+) -> list[str]:
+    problems = []
+    partitioning = table.time_partitioning
+    if table.range_partitioning is not None:
+        actual = "integer range"
+    elif partitioning is None:
+        actual = None
+    else:
+        # Without a field the table is partitioned by ingestion time.
+        actual = partitioning.field or "_PARTITIONTIME"
+        if partitioning.type_ != bigquery.TimePartitioningType.DAY:
+            actual = f"{actual} ({partitioning.type_})"
+    expected = config.target.partition_by
+    if actual != expected:
+        problems.append(
+            f"partitioned by {actual or 'nothing'}, "
+            f"config says {expected or 'nothing'}"
+        )
+    clustering = list(table.clustering_fields or [])
+    if clustering != list(config.target.cluster_by):
+        problems.append(
+            f"clustered by {clustering or 'nothing'}, "
+            f"config says {list(config.target.cluster_by) or 'nothing'}"
+        )
+    return problems
+
+
+@contextmanager
+def _bigquery_errors(table_id: str) -> Generator[None]:
+    """Turn Google API errors into LoadError with a clear message."""
+    try:
+        yield
+    except GoogleAPIError as error:
+        reason = str(error).splitlines()[0] if str(error) else ""
+        lines = [f"BigQuery error: {reason or type(error).__name__}"]
+        # A failed load job puts the actual causes, such as the bad column,
+        # in errors rather than in the message.
+        details = getattr(error, "errors", None) or []
+        lines += [
+            f"  {detail['message']}"
+            for detail in details[:_MAX_ERROR_DETAILS]
+            if isinstance(detail, dict) and detail.get("message")
+        ]
+        raise LoadError(
+            "\n".join(f"{table_id}: {line}" for line in lines)
+        ) from error
+
+
+_MAX_ERROR_DETAILS = 3

@@ -340,7 +340,7 @@ Goal: idempotent loads into the BigQuery sandbox.
 
 - [x] `bq_schema.py`: column type to BigQuery type, `nullable` to mode
       `[feat]`
-- [ ] Create the table if missing, with partitioning and clustering from the
+- [x] Create the table if missing, with partitioning and clustering from the
       config `[feat]`
 - [ ] Load Parquet with a load job, explicit schema, `WRITE_TRUNCATE` `[feat]`
 - [ ] Verify the loaded row count against the Parquet row count `[feat]`

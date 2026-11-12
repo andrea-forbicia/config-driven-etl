@@ -121,5 +121,11 @@ and this project adheres to
   per column in config order: `string` STRING, `int` INT64, `float`
   FLOAT64, `bool` BOOL, `date` DATE, `datetime` DATETIME; `nullable:
   false` columns are REQUIRED, the others NULLABLE.
+- `ensure_table` creates the BigQuery target table when it is missing,
+  with the config's schema, day partitioning on `target.partition_by`
+  and clustering on `target.cluster_by`. An existing table whose
+  partitioning or clustering differs from the config raises `LoadError`,
+  since BigQuery cannot change them; Google API errors also become
+  `LoadError`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

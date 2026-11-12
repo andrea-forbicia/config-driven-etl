@@ -6,6 +6,8 @@ from unittest import mock
 
 import polars as pl
 import pyarrow.parquet as pq
+from google.api_core.exceptions import Forbidden, NotFound
+from google.cloud import bigquery
 
 from config_driven_etl.dataset_config import (
     DatasetConfig,
@@ -14,6 +16,8 @@ from config_driven_etl.dataset_config import (
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
     LoadError,
+    bigquery_table_id,
+    ensure_table,
     processed_parquet_path,
     verify_parquet,
     write_parquet,
@@ -250,6 +254,193 @@ class FixtureParquetTest(unittest.TestCase):
 
                     verify_parquet(path, config, valid.height)
                     self.assertEqual(valid.height, 4)
+
+
+TABLE_ID = "project.dataset.sample"
+
+
+def target_config(
+    partition_by: str | None = "d", cluster_by: tuple[str, ...] = ("s",)
+) -> DatasetConfig:
+    return DatasetConfig.model_validate(
+        {
+            "name": "sample",
+            "source": {"url": "https://example.org/sample.csv"},
+            "columns": [
+                {"source": "s", "name": "s", "type": "string"},
+                {
+                    "source": "d",
+                    "name": "d",
+                    "type": "date",
+                    "format": "%Y-%m-%d",
+                    "nullable": False,
+                },
+            ],
+            "target": {
+                "table": "sample",
+                "partition_by": partition_by,
+                "cluster_by": list(cluster_by),
+            },
+        }
+    )
+
+
+def fake_client() -> mock.MagicMock:
+    return mock.create_autospec(bigquery.Client, instance=True)
+
+
+def existing_table(
+    field: str | None = "d",
+    clustering: list[str] | None = None,
+    partition_type: str = bigquery.TimePartitioningType.DAY,
+) -> bigquery.Table:
+    table = bigquery.Table(TABLE_ID)
+    if field is not None:
+        table.time_partitioning = bigquery.TimePartitioning(
+            type_=partition_type, field=field
+        )
+    table.clustering_fields = ["s"] if clustering is None else clustering
+    return table
+
+
+class BigQueryTableIdTest(unittest.TestCase):
+    def test_joins_project_dataset_and_table(self) -> None:
+        self.assertEqual(
+            bigquery_table_id("project", "dataset", "sample"), TABLE_ID
+        )
+
+
+class EnsureTableTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = fake_client()
+
+    def created_table(self) -> bigquery.Table:
+        self.client.create_table.assert_called_once()
+        args, kwargs = self.client.create_table.call_args
+        self.assertEqual(kwargs, {"exists_ok": True})
+        return args[0]
+
+    def test_creates_a_missing_table_from_the_config(self) -> None:
+        self.client.get_table.side_effect = NotFound("missing")
+
+        ensure_table(self.client, TABLE_ID, target_config())
+
+        table = self.created_table()
+        self.assertEqual(table.reference.table_id, "sample")
+        self.assertEqual(
+            table.schema,
+            [
+                bigquery.SchemaField("s", "STRING", mode="NULLABLE"),
+                bigquery.SchemaField("d", "DATE", mode="REQUIRED"),
+            ],
+        )
+        partitioning = table.time_partitioning
+        assert partitioning is not None
+        self.assertEqual(partitioning.field, "d")
+        self.assertEqual(partitioning.type_, bigquery.TimePartitioningType.DAY)
+        self.assertEqual(table.clustering_fields, ["s"])
+
+    def test_creates_an_unpartitioned_unclustered_table(self) -> None:
+        self.client.get_table.side_effect = NotFound("missing")
+
+        ensure_table(
+            self.client,
+            TABLE_ID,
+            target_config(partition_by=None, cluster_by=()),
+        )
+
+        table = self.created_table()
+        self.assertIsNone(table.time_partitioning)
+        self.assertIsNone(table.clustering_fields)
+
+    def test_keeps_a_matching_table(self) -> None:
+        self.client.get_table.return_value = existing_table()
+
+        ensure_table(self.client, TABLE_ID, target_config())
+
+        self.client.create_table.assert_not_called()
+
+    def test_rejects_a_table_with_another_layout(self) -> None:
+        cases = {
+            "other partition field": (
+                existing_table(field="other"),
+                "partitioned by other, config says d",
+            ),
+            "not partitioned": (
+                existing_table(field=None),
+                "partitioned by nothing, config says d",
+            ),
+            "monthly partitions": (
+                existing_table(partition_type="MONTH"),
+                "partitioned by d (MONTH), config says d",
+            ),
+            "other clustering": (
+                existing_table(clustering=["d"]),
+                "clustered by ['d'], config says ['s']",
+            ),
+            "not clustered": (
+                existing_table(clustering=[]),
+                "clustered by nothing, config says ['s']",
+            ),
+        }
+        for label, (table, problem) in cases.items():
+            with self.subTest(label):
+                self.client.get_table.return_value = table
+
+                with self.assertRaises(LoadError) as context:
+                    ensure_table(self.client, TABLE_ID, target_config())
+
+                self.assertEqual(
+                    str(context.exception).splitlines(),
+                    [
+                        f"{TABLE_ID}: {problem}",
+                        f"{TABLE_ID}: delete the table to recreate it",
+                    ],
+                )
+                self.client.create_table.assert_not_called()
+
+    def test_ingestion_time_partitioning_is_a_mismatch(self) -> None:
+        table = bigquery.Table(TABLE_ID)
+        table.time_partitioning = bigquery.TimePartitioning()
+        table.clustering_fields = ["s"]
+        self.client.get_table.return_value = table
+
+        with self.assertRaises(LoadError) as context:
+            ensure_table(self.client, TABLE_ID, target_config())
+
+        self.assertIn("partitioned by _PARTITIONTIME", str(context.exception))
+
+    def test_api_errors_become_load_errors(self) -> None:
+        self.client.get_table.side_effect = Forbidden("access denied")
+
+        with self.assertRaises(LoadError) as context:
+            ensure_table(self.client, TABLE_ID, target_config())
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_ID}: BigQuery error: 403 access denied",
+        )
+
+    def test_api_error_details_are_listed(self) -> None:
+        details = [
+            {"reason": "invalid", "message": f"cause {n}"} for n in range(5)
+        ]
+        self.client.get_table.side_effect = Forbidden(
+            "access denied", errors=[*details, "not a dict"]
+        )
+
+        with self.assertRaises(LoadError) as context:
+            ensure_table(self.client, TABLE_ID, target_config())
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{TABLE_ID}: BigQuery error: 403 access denied",
+                f"{TABLE_ID}:   cause 0",
+                f"{TABLE_ID}:   cause 1",
+                f"{TABLE_ID}:   cause 2",
+            ],
+        )
 
 
 if __name__ == "__main__":
