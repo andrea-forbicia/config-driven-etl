@@ -3,11 +3,13 @@
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from enum import IntEnum
 from pathlib import Path
 from typing import Annotated
 
 import requests
 import typer
+from google.auth.exceptions import GoogleAuthError
 from google.cloud import bigquery
 
 from config_driven_etl import __version__
@@ -29,10 +31,49 @@ from config_driven_etl.pipeline import (
     load_dataset,
     transform_dataset,
 )
-from config_driven_etl.settings import Settings
+from config_driven_etl.settings import Settings, SettingsError
 from config_driven_etl.transform import TransformError
 
-app = typer.Typer(no_args_is_help=True)
+
+class ExitCode(IntEnum):
+    """Process exit code for each error category."""
+
+    OK = 0
+    INTERNAL = 1
+    USAGE = 2
+    CONFIG = 3
+    EXTRACT = 4
+    TRANSFORM = 5
+    LOAD = 6
+
+
+_EXIT_CODE_HELP = {
+    ExitCode.OK: "success",
+    ExitCode.INTERNAL: "unexpected internal error",
+    ExitCode.USAGE: "invalid command-line usage",
+    ExitCode.CONFIG: "invalid dataset file or missing setting",
+    ExitCode.EXTRACT: "source unreachable or raw CSV unreadable",
+    ExitCode.TRANSFORM: "data does not match the dataset config",
+    ExitCode.LOAD: "Parquet output or BigQuery load failed",
+}
+
+# Expected failures by category; anything else is a bug and exits with
+# INTERNAL and a traceback.
+_CATEGORIES: list[tuple[tuple[type[Exception], ...], ExitCode]] = [
+    ((DatasetConfigError, SettingsError), ExitCode.CONFIG),
+    ((ExtractError,), ExitCode.EXTRACT),
+    ((TransformError,), ExitCode.TRANSFORM),
+    ((LoadError, GoogleAuthError), ExitCode.LOAD),
+]
+
+app = typer.Typer(
+    no_args_is_help=True,
+    epilog="Exit codes: "
+    + "; ".join(
+        f"{code.value} {text}" for code, text in _EXIT_CODE_HELP.items()
+    )
+    + ".",
+)
 
 DatasetFile = Annotated[
     Path,
@@ -74,7 +115,7 @@ def validate(
 ) -> None:
     """Validate dataset config files without touching any data.
 
-    Every file is checked; exits with code 1 if any is invalid.
+    Every file is checked; exits with code 3 if any is invalid.
     """
     valid = True
     for path in paths:
@@ -89,7 +130,7 @@ def validate(
         for file in files:
             valid &= _validate_file(file)
     if not valid:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=ExitCode.CONFIG)
 
 
 def _validate_file(path: Path) -> bool:
@@ -172,7 +213,7 @@ def _bigquery_target(settings: Settings) -> tuple[str, str]:
             ]
             if not value
         ]
-        raise _SettingsError(f"missing setting: {', '.join(missing)}")
+        raise SettingsError(f"missing setting: {', '.join(missing)}")
     return project, dataset
 
 
@@ -197,29 +238,31 @@ def _log_stage(
     log_event("stage_completed", **fields)
 
 
-class _SettingsError(Exception):
-    """A required environment setting is missing."""
-
-
 @contextmanager
 def _command(dataset_file: Path) -> Generator[None]:
-    """Log as JSON and turn an expected failure into exit code 1.
+    """Log as JSON and turn an expected failure into its exit code.
 
-    The failure is one error event; nothing else is printed.
+    The failure is one error event with its category; nothing else is
+    printed.
     """
     configure_logging()
+    expected = tuple(kind for kinds, _ in _CATEGORIES for kind in kinds)
     try:
         yield
-    except (
-        DatasetConfigError,
-        ExtractError,
-        TransformError,
-        LoadError,
-        _SettingsError,
-    ) as error:
+    except expected as error:
+        code = _exit_code(error)
         log_error(
             "run_failed",
             dataset_file=str(dataset_file),
+            category=code.name.lower(),
+            exit_code=code.value,
             error=str(error),
         )
-        raise typer.Exit(code=1) from error
+        raise typer.Exit(code=code) from error
+
+
+def _exit_code(error: Exception) -> ExitCode:
+    for kinds, code in _CATEGORIES:
+        if isinstance(error, kinds):
+            return code
+    return ExitCode.INTERNAL

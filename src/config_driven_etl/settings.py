@@ -5,6 +5,10 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class SettingsError(Exception):
+    """A required environment setting is missing or invalid."""
+
+
 class Settings(BaseSettings):
     """Environment-level settings shared by every dataset run.
 

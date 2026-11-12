@@ -43,7 +43,7 @@ and this project adheres to
   electric vehicle population (`wa_ev_population`, not partitioned).
 - `validate` CLI command: checks one or more dataset files, or every
   `*.yaml` file in a directory, prints `ok: <file>` for each valid file and
-  every problem to stderr, and exits with code 1 if any file is invalid or a
+  every problem to stderr, and exits with code 3 if any file is invalid or a
   directory has no dataset files.
 - Streamed download of `source.url` into `data/raw/<name>/<name>.csv`, with
   connect and read timeouts. The file is written under a temporary name
@@ -149,14 +149,22 @@ and this project adheres to
   counts its rows, so a CSV whose body cannot be parsed fails there;
   `transform` writes the valid rows as verified Parquet; `load` loads
   it with the row check; `run` does all three and checks the BigQuery
-  settings before downloading anything. Expected failures exit with
-  code 1.
+  settings before downloading anything.
 - Structured JSON logging on stderr for `extract`, `transform`, `load`
   and `run`: one `stage_completed` line per stage with the dataset name,
   `rows_in`, `rows_out`, `rows_rejected`, `duration_s` and, for
   `transform`, the rejected rows per reason; a failure is one
   `run_failed` error line with the dataset file and the message.
   Settings and credentials are never logged.
+- Distinct exit codes per error category, listed in `--help` and logged
+  with each failure as `category` and `exit_code`: 0 success, 1
+  unexpected internal error, 2 invalid usage, 3 invalid dataset file or
+  missing setting, 4 extract, 5 transform (data does not match the
+  config), 6 load (Parquet output or BigQuery, including credential and
+  network errors). `write_parquet` reports write failures as
+  `LoadError`, and the raw CSV download and copy report file system
+  errors (permissions, a full disk) as `ExtractError`; unreadable
+  download metadata only causes a fresh download.
 
 ### Fixed
 
