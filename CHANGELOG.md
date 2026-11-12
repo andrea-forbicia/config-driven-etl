@@ -54,5 +54,10 @@ and this project adheres to
   with the same atomic write as downloads. A relative `source.path` is
   resolved against the directory of the dataset YAML file, not the working
   directory.
+- Downloads are skipped when the source is unchanged: the previous
+  `Last-Modified` is sent as `If-Modified-Since` and a `304` keeps the
+  existing file. URL, `Last-Modified`, size and SHA-256 of each download
+  are kept in `data/raw/<name>/<name>.meta.json`. ETags are not used,
+  since some portals return unstable ones.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

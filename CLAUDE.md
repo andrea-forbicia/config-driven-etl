@@ -292,7 +292,7 @@ Goal: the raw CSV of any configured dataset lands in `data/raw/<name>/`.
 - [x] Download from `source.url` (streamed, with timeout, HTTP errors fail
       fast) `[feat]`
 - [x] Read from `source.path` `[feat]`
-- [ ] Skip the download when the file is present and unchanged (decide
+- [x] Skip the download when the file is present and unchanged (decide
       between ETag / Last-Modified and content hash) `[feat]`
 - [ ] Read the raw CSV into a `LazyFrame` with delimiter and encoding from the
       config, every column as string `[feat]`
