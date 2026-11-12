@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 8 — Release**
+**Current phase: done — `v1.0.0` released**
 
 How to use this plan:
 
@@ -388,7 +388,7 @@ Goal: `v1.0.0` published.
 - [x] Final README: architecture diagram, "add a dataset" section, sample
       query, note on sandbox table expiry `[docs]`
 - [x] `CHANGELOG.md` entry and version bump to `1.0.0` `[chore]`
-- [ ] Annotated tag `v1.0.0` on `main` *(manual)*
+- [x] Annotated tag `v1.0.0` on `main` *(manual)*
 
 Exit: the GitHub Release for `v1.0.0` exists and its image builds.
 
