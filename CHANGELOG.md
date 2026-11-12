@@ -173,6 +173,14 @@ and this project adheres to
 - Coverage threshold: `pytest --cov=config_driven_etl` fails below 85% of
   `src/` (currently about 99%), and `python -m config_driven_etl` is
   covered by a test.
+- Dockerfile: two-stage build on `python:3.12-slim` that installs the
+  package wheel, runs as the non-root user `app`, and uses
+  `python -m config_driven_etl` as entry point, so the dataset file is
+  the command argument. Committed dataset files are in the image;
+  settings come from environment variables and credentials are mounted
+  at run time, never baked in. `.dockerignore` is an allowlist, so only
+  the package sources, dataset files and metadata reach the build
+  context.
 
 ### Fixed
 

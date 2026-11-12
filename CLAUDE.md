@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 5 — Load**
+**Current phase: 7 — CI/CD**
 
 How to use this plan:
 
@@ -363,7 +363,7 @@ Goal: a CLI and container that behave like a product.
 - [x] Distinct exit codes per error category, documented in `--help` `[feat]`
 - [x] System tests on both fixture datasets, BigQuery faked `[test]`
 - [x] Coverage at or above 85% on `src/` `[test]`
-- [ ] Dockerfile: slim image, non-root user, dataset file as argument,
+- [x] Dockerfile: slim image, non-root user, dataset file as argument,
       credentials mounted at runtime, never baked in `[build]`
 
 Exit: `docker run` executes `run` on a real dataset end to end.

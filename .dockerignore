@@ -1,0 +1,10 @@
+# Allowlist: only what the image needs reaches the build context, so
+# secrets such as .env or key files can never be copied in by mistake.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!datasets/
+**/__pycache__/
+**/*.py[cod]
