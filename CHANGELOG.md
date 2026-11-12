@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Dataset config for the 2018 Central Park Squirrel Census
+  (`nyc_squirrel_census`, NYC Open Data, not partitioned), added without
+  code changes.
+
 ## [1.0.0] - 2026-11-12
 
 ### Added
