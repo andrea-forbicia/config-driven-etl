@@ -57,15 +57,7 @@ def verify_parquet(
     The columns must be exactly those of output_schema, in config order
     and with its dtypes. Raises LoadError listing every mismatch.
     """
-    try:
-        # Both read only the file footer, not the data.
-        actual = pl.read_parquet_schema(path)
-        rows = pl.scan_parquet(path).select(pl.len()).collect().item()
-    except (OSError, pl.exceptions.PolarsError) as error:
-        lines = str(error).splitlines()
-        reason = lines[0] if lines and lines[0] else type(error).__name__
-        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
-
+    actual, rows = _read_footer(path)
     problems = _schema_problems(config, actual)
     if rows != expected_rows:
         problems.append(f"{rows} rows written, expected {expected_rows}")
@@ -73,6 +65,49 @@ def verify_parquet(
         raise LoadError(
             "\n".join(f"{path}: {problem}" for problem in problems)
         )
+
+
+def parquet_row_count(path: Path) -> int:
+    """Return the number of rows in a Parquet file, from its footer."""
+    return _read_footer(path)[1]
+
+
+def verify_table_rows(
+    client: bigquery.Client, table_id: str, expected_rows: int
+) -> None:
+    """Check that a table holds exactly expected_rows rows.
+
+    After a WRITE_TRUNCATE load the table holds only the loaded file, so
+    its row count must equal the file's. Raises LoadError otherwise.
+    """
+    with _bigquery_errors(table_id):
+        table = client.get_table(table_id)
+    if table.num_rows == expected_rows:
+        return
+    message = (
+        f"{table_id}: {table.num_rows} rows loaded, expected {expected_rows}"
+    )
+    # BigQuery drops rows whose partition is already past its expiration
+    # without failing the job; the sandbox expires partitions after 60
+    # days, so old data silently disappears.
+    if table.time_partitioning is not None:
+        message += (
+            "; rows in partitions older than the partition expiration are "
+            "dropped (60 days in the BigQuery sandbox)"
+        )
+    raise LoadError(message)
+
+
+def _read_footer(path: Path) -> tuple[dict[str, pl.DataType], int]:
+    try:
+        # Both read only the file footer, not the data.
+        schema = pl.read_parquet_schema(path)
+        rows = pl.scan_parquet(path).select(pl.len()).collect().item()
+    except (OSError, pl.exceptions.PolarsError) as error:
+        lines = str(error).splitlines()
+        reason = lines[0] if lines and lines[0] else type(error).__name__
+        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
+    return schema, rows
 
 
 def _schema_problems(

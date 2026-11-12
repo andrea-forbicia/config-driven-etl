@@ -20,8 +20,10 @@ from config_driven_etl.load import (
     bigquery_table_id,
     ensure_table,
     load_parquet,
+    parquet_row_count,
     processed_parquet_path,
     verify_parquet,
+    verify_table_rows,
     write_parquet,
 )
 from config_driven_etl.transform import transform
@@ -538,6 +540,99 @@ class LoadParquetTest(unittest.TestCase):
 
         self.assertIn("cannot read file", str(context.exception))
         self.client.load_table_from_file.assert_not_called()
+
+
+class ParquetRowCountTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "x.parquet"
+
+    def test_counts_rows(self) -> None:
+        write_parquet(typed_frame(), self.path)
+
+        self.assertEqual(parquet_row_count(self.path), 2)
+
+    def test_empty_file(self) -> None:
+        write_parquet(typed_frame().head(0), self.path)
+
+        self.assertEqual(parquet_row_count(self.path), 0)
+
+    def test_unreadable_file(self) -> None:
+        with self.assertRaises(LoadError) as context:
+            parquet_row_count(self.path)
+
+        self.assertIn("cannot read Parquet", str(context.exception))
+
+
+class VerifyTableRowsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = fake_client()
+
+    def with_rows(self, rows: int | None, partitioned: bool = False) -> None:
+        table = mock.create_autospec(bigquery.Table, instance=True)
+        table.num_rows = rows
+        table.time_partitioning = (
+            bigquery.TimePartitioning(field="d") if partitioned else None
+        )
+        self.client.get_table.return_value = table
+
+    def test_accepts_matching_count(self) -> None:
+        self.with_rows(4)
+
+        verify_table_rows(self.client, TABLE_ID, 4)
+
+        self.client.get_table.assert_called_once_with(TABLE_ID)
+
+    def test_accepts_empty_table_for_empty_file(self) -> None:
+        self.with_rows(0)
+
+        verify_table_rows(self.client, TABLE_ID, 0)
+
+    def test_rejects_a_different_count(self) -> None:
+        self.with_rows(3)
+
+        with self.assertRaises(LoadError) as context:
+            verify_table_rows(self.client, TABLE_ID, 4)
+
+        self.assertEqual(
+            str(context.exception), f"{TABLE_ID}: 3 rows loaded, expected 4"
+        )
+
+    def test_partitioned_table_mentions_partition_expiration(self) -> None:
+        self.with_rows(0, partitioned=True)
+
+        with self.assertRaises(LoadError) as context:
+            verify_table_rows(self.client, TABLE_ID, 4)
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_ID}: 0 rows loaded, expected 4; rows in partitions "
+            "older than the partition expiration are dropped (60 days in "
+            "the BigQuery sandbox)",
+        )
+
+    def test_rejects_an_unknown_count(self) -> None:
+        self.with_rows(None)
+
+        with self.assertRaises(LoadError) as context:
+            verify_table_rows(self.client, TABLE_ID, 4)
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_ID}: None rows loaded, expected 4",
+        )
+
+    def test_api_errors_become_load_errors(self) -> None:
+        self.client.get_table.side_effect = NotFound("no such table")
+
+        with self.assertRaises(LoadError) as context:
+            verify_table_rows(self.client, TABLE_ID, 4)
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_ID}: BigQuery error: 404 no such table",
+        )
 
 
 if __name__ == "__main__":

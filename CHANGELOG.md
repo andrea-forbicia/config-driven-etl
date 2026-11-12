@@ -132,5 +132,10 @@ and this project adheres to
   `WRITE_TRUNCATE`, and the config's partitioning and clustering. It
   waits for the job; an unreadable file or a failed job raises
   `LoadError`.
+- `verify_table_rows` checks that the table holds exactly the row count
+  of the loaded Parquet file (`parquet_row_count`, read from its
+  footer), and raises `LoadError` otherwise. For a partitioned table the
+  error points at partition expiration: BigQuery silently drops rows in
+  expired partitions, after 60 days in the sandbox.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
