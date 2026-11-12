@@ -1,9 +1,13 @@
+import re
 import unittest
 
 from typer.testing import CliRunner
 
 from config_driven_etl import __version__
 from config_driven_etl.cli import app
+
+# Rich forces colors on CI runners, splitting option names with ANSI codes.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class CliTest(unittest.TestCase):
@@ -20,4 +24,4 @@ class CliTest(unittest.TestCase):
         result = self.runner.invoke(app, ["--help"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--version", result.output)
+        self.assertIn("--version", ANSI_ESCAPE.sub("", result.output))
