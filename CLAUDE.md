@@ -77,6 +77,8 @@ config-driven-etl/
 │   ├── transform.py          # generic rules applied from the config
 │   ├── bq_schema.py          # config columns -> BigQuery SchemaField
 │   ├── load.py               # Parquet write, BigQuery load job
+│   ├── pipeline.py           # extract / transform / load stages
+│   ├── errors.py             # error messages and categories
 │   └── logging.py            # structured JSON logging
 ├── tests/
 │   ├── unit/                 # no I/O, no network
@@ -229,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 5 — Load**
+**Current phase: 7 — CI/CD**
 
 How to use this plan:
 
@@ -355,13 +357,13 @@ table state.
 
 Goal: a CLI and container that behave like a product.
 
-- [ ] `extract`, `transform`, `load`, `run` CLI commands `[feat]`
-- [ ] Structured JSON logging, one line per stage with row counts and
+- [x] `extract`, `transform`, `load`, `run` CLI commands `[feat]`
+- [x] Structured JSON logging, one line per stage with row counts and
       duration `[feat]`
-- [ ] Distinct exit codes per error category, documented in `--help` `[feat]`
-- [ ] System tests on both fixture datasets, BigQuery faked `[test]`
-- [ ] Coverage at or above 85% on `src/` `[test]`
-- [ ] Dockerfile: slim image, non-root user, dataset file as argument,
+- [x] Distinct exit codes per error category, documented in `--help` `[feat]`
+- [x] System tests on both fixture datasets, BigQuery faked `[test]`
+- [x] Coverage at or above 85% on `src/` `[test]`
+- [x] Dockerfile: slim image, non-root user, dataset file as argument,
       credentials mounted at runtime, never baked in `[build]`
 
 Exit: `docker run` executes `run` on a real dataset end to end.

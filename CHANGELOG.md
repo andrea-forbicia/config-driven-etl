@@ -43,7 +43,7 @@ and this project adheres to
   electric vehicle population (`wa_ev_population`, not partitioned).
 - `validate` CLI command: checks one or more dataset files, or every
   `*.yaml` file in a directory, prints `ok: <file>` for each valid file and
-  every problem to stderr, and exits with code 1 if any file is invalid or a
+  every problem to stderr, and exits with code 3 if any file is invalid or a
   directory has no dataset files.
 - Streamed download of `source.url` into `data/raw/<name>/<name>.csv`, with
   connect and read timeouts. The file is written under a temporary name
@@ -144,5 +144,48 @@ and this project adheres to
   sandbox's 60-day partition expiration does not drop them. Skipped
   without `GCP_PROJECT_ID`, `BQ_DATASET` or application default
   credentials.
+- `extract`, `transform`, `load` and `run` CLI commands, each taking a
+  dataset YAML file. `extract` downloads or copies the raw CSV and
+  counts its rows, so a CSV whose body cannot be parsed fails there;
+  `transform` writes the valid rows as verified Parquet; `load` loads
+  it with the row check; `run` does all three and checks the BigQuery
+  settings before downloading anything.
+- Structured JSON logging on stderr for `extract`, `transform`, `load`
+  and `run`: one `stage_completed` line per stage with the dataset name,
+  `rows_in`, `rows_out`, `rows_rejected`, `duration_s` and, for
+  `transform`, the rejected rows per reason; a failure is one
+  `run_failed` error line with the dataset file and the message.
+  Settings and credentials are never logged.
+- Distinct exit codes per error category, listed in `--help` and logged
+  with each failure as `category` and `exit_code`: 0 success, 1
+  unexpected internal error, 2 invalid usage, 3 invalid dataset file or
+  missing setting, 4 extract, 5 transform (data does not match the
+  config), 6 load (Parquet output or BigQuery, including credential and
+  network errors). `write_parquet` reports write failures as
+  `LoadError`, and the raw CSV download and copy report file system
+  errors (permissions, a full disk) as `ExtractError`; unreadable
+  download metadata only causes a fresh download.
+- System tests run `run` end to end on both fixture datasets against an
+  in-memory BigQuery fake that reads the loaded Parquet back. They check
+  the Parquet schema, row count and values, the loaded data, the
+  partitioning and clustering sent to BigQuery, one log line per stage,
+  and that a second run leaves the same state.
+- Coverage threshold: `pytest --cov=config_driven_etl` fails below 85% of
+  `src/` (currently about 99%), and `python -m config_driven_etl` is
+  covered by a test.
+- Dockerfile: two-stage build on `python:3.12-slim` that installs the
+  package wheel, runs as the non-root user `app`, and uses
+  `python -m config_driven_etl` as entry point, so the dataset file is
+  the command argument. Committed dataset files are in the image;
+  settings come from environment variables and credentials are mounted
+  at run time, never baked in. `.dockerignore` is an allowlist, so only
+  the package sources, dataset files and metadata reach the build
+  context.
+
+### Fixed
+
+- An error with an empty message no longer crashes reading a raw CSV,
+  validating a date format or reading a Parquet file with an
+  `IndexError`; the message names the error type instead.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

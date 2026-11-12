@@ -15,6 +15,7 @@ import requests
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from config_driven_etl.dataset_config import Source
+from config_driven_etl.errors import error_reason
 
 # Read is the longest wait between two chunks, not the whole download.
 TIMEOUT = (10, 60)  # (connect, read) in seconds
@@ -110,7 +111,13 @@ def copy_csv(source: Path, destination: Path) -> int:
     size = _write_atomically(destination, lambda file: _copy(source, file))
     # Download metadata no longer describes this file; a later download
     # from the URL must not be skipped because of it.
-    metadata_path(destination).unlink(missing_ok=True)
+    metadata = metadata_path(destination)
+    try:
+        metadata.unlink(missing_ok=True)
+    except OSError as error:
+        raise ExtractError(
+            f"{metadata}: cannot remove file: {error_reason(error)}"
+        ) from error
     return size
 
 
@@ -119,7 +126,8 @@ def _reusable_metadata(url: str, destination: Path) -> _SourceMetadata | None:
     try:
         text = metadata_path(destination).read_text(encoding="utf-8")
         size = destination.stat().st_size
-    except (FileNotFoundError, UnicodeDecodeError):
+    # Unreadable metadata only costs a fresh download.
+    except (OSError, UnicodeDecodeError):
         return None
     try:
         metadata = _SourceMetadata.model_validate_json(text)
@@ -134,19 +142,29 @@ def _reusable_metadata(url: str, destination: Path) -> _SourceMetadata | None:
 def _write_atomically(
     destination: Path, write: Callable[[IO[bytes]], int]
 ) -> int:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Deleted when the block exits, which is a no-op after the rename and
-    # removes the partial file on any error.
-    with tempfile.NamedTemporaryFile(
-        dir=destination.parent,
-        prefix=f".{destination.name}.",
-        suffix=".part",
-        delete_on_close=False,
-    ) as temp_file:
-        size = write(temp_file)
-        # Windows cannot rename a file that is still open.
-        temp_file.close()
-        Path(temp_file.name).replace(destination)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Deleted when the block exits, which is a no-op after the rename
+        # and removes the partial file on any error.
+        with tempfile.NamedTemporaryFile(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".part",
+            delete_on_close=False,
+        ) as temp_file:
+            size = write(temp_file)
+            # Windows cannot rename a file that is still open.
+            temp_file.close()
+            Path(temp_file.name).replace(destination)
+    except requests.RequestException:
+        # A subclass of OSError, but a network failure: _http_errors
+        # reports it as a failed download.
+        raise
+    except OSError as error:
+        # Permissions, a full disk or a file in the way of the directory.
+        raise ExtractError(
+            f"{destination}: cannot write file: {error_reason(error)}"
+        ) from error
     return size
 
 
@@ -211,7 +229,7 @@ def scan_raw_csv(path: Path, source: Source) -> pl.LazyFrame:
         header = _scan(path, source, has_header=False, n_rows=1)
         names = header.collect().row(0)
     except (OSError, pl.exceptions.PolarsError) as error:
-        reason = str(error).splitlines()[0] or type(error).__name__
+        reason = error_reason(error)
         raise ExtractError(f"{path}: cannot read CSV: {reason}") from error
 
     # Empty names cannot be mapped by a config, so repeats do not matter.

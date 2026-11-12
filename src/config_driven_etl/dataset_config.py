@@ -22,6 +22,8 @@ from pydantic import (
     model_validator,
 )
 
+from config_driven_etl.errors import error_reason
+
 # Names end up as BigQuery identifiers and directory names; lowercase
 # snake_case avoids case-insensitive clashes in both.
 Identifier = Annotated[
@@ -166,7 +168,7 @@ def _format_problem(format_: str, column_type: ColumnType) -> str | None:
         return "uses %f, which misreads fractions; use %.f or %6f"
     except pl.exceptions.ComputeError as error:
         # These carry a useful reason, such as an hour without minutes.
-        reason = str(error).splitlines()[0]
+        reason = error_reason(error)
         return f"cannot be used to read a {column_type}: {reason}"
     except pl.exceptions.PolarsError:
         return f"cannot read back a {column_type} written with it"
@@ -360,7 +362,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):
 def _format_yaml_error(error: yaml.YAMLError) -> str:
     if not isinstance(error, yaml.MarkedYAMLError):
         # ReaderError and similar carry no line mark, only their text.
-        return str(error).splitlines()[0]
+        return error_reason(error)
     reason = error.problem or "invalid YAML"
     if error.problem_mark is None:
         return reason

@@ -7,7 +7,9 @@ from unittest import mock
 
 import polars as pl
 import pyarrow.parquet as pq
+import requests
 from google.api_core.exceptions import BadRequest, Forbidden, NotFound
+from google.auth.exceptions import RefreshError
 from google.cloud import bigquery
 
 from config_driven_etl.dataset_config import (
@@ -96,9 +98,14 @@ class WriteParquetTest(unittest.TestCase):
         write_parquet(typed_frame(), self.destination)
         failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64))
 
-        with self.assertRaises(pl.exceptions.PolarsError):
+        with self.assertRaises(LoadError) as context:
             write_parquet(failing, self.destination)
 
+        self.assertTrue(
+            str(context.exception).startswith(
+                f"{self.destination}: cannot write Parquet: "
+            )
+        )
         self.assertEqual(pl.read_parquet(self.destination).height, 2)
         self.assertEqual(
             list(self.destination.parent.iterdir()), [self.destination]
@@ -107,10 +114,19 @@ class WriteParquetTest(unittest.TestCase):
     def test_failed_first_write_leaves_no_file(self) -> None:
         failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64))
 
-        with self.assertRaises(pl.exceptions.PolarsError):
+        with self.assertRaises(LoadError):
             write_parquet(failing, self.destination)
 
         self.assertEqual(list(self.destination.parent.iterdir()), [])
+
+    def test_unwritable_directory_raises_load_error(self) -> None:
+        blocker = self.dir / "processed"
+        blocker.write_text("a file, not a directory", encoding="utf-8")
+
+        with self.assertRaises(LoadError) as context:
+            write_parquet(typed_frame(), self.destination)
+
+        self.assertIn("cannot write Parquet", str(context.exception))
 
     def test_empty_frame_keeps_its_schema(self) -> None:
         write_parquet(typed_frame().head(0), self.destination)
@@ -424,6 +440,22 @@ class EnsureTableTest(unittest.TestCase):
             str(context.exception),
             f"{TABLE_ID}: BigQuery error: 403 access denied",
         )
+
+    def test_auth_and_network_errors_become_load_errors(self) -> None:
+        for error in (
+            RefreshError("token expired"),
+            requests.ConnectionError("connection reset"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.client.get_table.side_effect = error
+
+                with self.assertRaises(LoadError) as context:
+                    ensure_table(self.client, TABLE_ID, target_config())
+
+                self.assertEqual(
+                    str(context.exception),
+                    f"{TABLE_ID}: cannot reach BigQuery: {error}",
+                )
 
     def test_api_error_details_are_listed(self) -> None:
         details = [

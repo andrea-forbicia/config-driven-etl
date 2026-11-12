@@ -1,17 +1,84 @@
 """Command-line interface."""
 
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
+from enum import IntEnum
 from pathlib import Path
 from typing import Annotated
 
+import requests
 import typer
+from google.auth.exceptions import GoogleAuthError
+from google.cloud import bigquery
 
 from config_driven_etl import __version__
 from config_driven_etl.dataset_config import (
+    DatasetConfig,
     DatasetConfigError,
     load_dataset_config,
 )
+from config_driven_etl.extract import ExtractError
+from config_driven_etl.load import LoadError
+from config_driven_etl.logging import (
+    configure_logging,
+    log_error,
+    log_event,
+)
+from config_driven_etl.pipeline import (
+    StageResult,
+    extract_dataset,
+    load_dataset,
+    transform_dataset,
+)
+from config_driven_etl.settings import Settings, SettingsError
+from config_driven_etl.transform import TransformError
 
-app = typer.Typer(no_args_is_help=True)
+
+class ExitCode(IntEnum):
+    """Process exit code for each error category."""
+
+    OK = 0
+    INTERNAL = 1
+    USAGE = 2
+    CONFIG = 3
+    EXTRACT = 4
+    TRANSFORM = 5
+    LOAD = 6
+
+
+_EXIT_CODE_HELP = {
+    ExitCode.OK: "success",
+    ExitCode.INTERNAL: "unexpected internal error",
+    ExitCode.USAGE: "invalid command-line usage",
+    ExitCode.CONFIG: "invalid dataset file or missing setting",
+    ExitCode.EXTRACT: "source unreachable or raw CSV unreadable",
+    ExitCode.TRANSFORM: "data does not match the dataset config",
+    ExitCode.LOAD: "Parquet output or BigQuery load failed",
+}
+
+# Expected failures by category; anything else is a bug and exits with
+# INTERNAL and a traceback.
+_CATEGORIES: list[tuple[tuple[type[Exception], ...], ExitCode]] = [
+    ((DatasetConfigError, SettingsError), ExitCode.CONFIG),
+    ((ExtractError,), ExitCode.EXTRACT),
+    ((TransformError,), ExitCode.TRANSFORM),
+    ((LoadError, GoogleAuthError), ExitCode.LOAD),
+]
+
+app = typer.Typer(
+    no_args_is_help=True,
+    epilog="Exit codes: "
+    + "; ".join(
+        f"{code.value} {text}" for code, text in _EXIT_CODE_HELP.items()
+    )
+    + ".",
+)
+
+DatasetFile = Annotated[
+    Path,
+    typer.Argument(help="Dataset YAML file.", show_default=False),
+]
 
 
 def _print_version(value: bool) -> None:
@@ -48,7 +115,7 @@ def validate(
 ) -> None:
     """Validate dataset config files without touching any data.
 
-    Every file is checked; exits with code 1 if any is invalid.
+    Every file is checked; exits with code 3 if any is invalid.
     """
     valid = True
     for path in paths:
@@ -63,7 +130,7 @@ def validate(
         for file in files:
             valid &= _validate_file(file)
     if not valid:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=ExitCode.CONFIG)
 
 
 def _validate_file(path: Path) -> bool:
@@ -74,3 +141,128 @@ def _validate_file(path: Path) -> bool:
         return False
     typer.echo(f"ok: {path} ({config.name}, {len(config.columns)} columns)")
     return True
+
+
+@app.command()
+def extract(dataset: DatasetFile) -> None:
+    """Download or copy the raw CSV into DATA_DIR/raw/<name>/."""
+    with _command(dataset):
+        config = load_dataset_config(dataset)
+        _extract(config, Settings())
+
+
+@app.command()
+def transform(dataset: DatasetFile) -> None:
+    """Clean the raw CSV into DATA_DIR/processed/<name>/<name>.parquet."""
+    with _command(dataset):
+        config = load_dataset_config(dataset)
+        _transform(config, Settings())
+
+
+@app.command()
+def load(dataset: DatasetFile) -> None:
+    """Load the processed Parquet into BigQuery, replacing the table data."""
+    with _command(dataset):
+        config = load_dataset_config(dataset)
+        _load(config, Settings())
+
+
+@app.command()
+def run(dataset: DatasetFile) -> None:
+    """Extract, transform and load one dataset."""
+    with _command(dataset):
+        config = load_dataset_config(dataset)
+        settings = Settings()
+        # Checked first so a missing setting does not waste a download.
+        _bigquery_target(settings)
+        _extract(config, settings)
+        _transform(config, settings)
+        _load(config, settings)
+
+
+def _extract(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
+    with requests.Session() as session:
+        result = extract_dataset(config, settings.data_dir, session)
+    _log_stage("extract", config, result, started)
+
+
+def _transform(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
+    result = transform_dataset(config, settings.data_dir)
+    _log_stage("transform", config, result, started)
+
+
+def _load(config: DatasetConfig, settings: Settings) -> None:
+    started = time.perf_counter()
+    project, dataset = _bigquery_target(settings)
+    client = _bigquery_client(project)
+    with client:
+        result = load_dataset(config, settings.data_dir, client, dataset)
+    _log_stage("load", config, result, started)
+
+
+def _bigquery_target(settings: Settings) -> tuple[str, str]:
+    project, dataset = settings.gcp_project_id, settings.bq_dataset
+    if not project or not dataset:
+        missing = [
+            name
+            for name, value in [
+                ("GCP_PROJECT_ID", project),
+                ("BQ_DATASET", dataset),
+            ]
+            if not value
+        ]
+        raise SettingsError(f"missing setting: {', '.join(missing)}")
+    return project, dataset
+
+
+def _bigquery_client(project: str) -> bigquery.Client:
+    # Credentials come from the environment (ADC), never from settings.
+    return bigquery.Client(project=project)
+
+
+def _log_stage(
+    stage: str, config: DatasetConfig, result: StageResult, started: float
+) -> None:
+    fields: dict[str, object] = {
+        "stage": stage,
+        "dataset": config.name,
+        "rows_in": result.rows_in,
+        "rows_out": result.rows_out,
+        "rows_rejected": result.rows_rejected,
+        "duration_s": round(time.perf_counter() - started, 3),
+    }
+    if result.rejections is not None:
+        fields["rejections"] = result.rejections
+    log_event("stage_completed", **fields)
+
+
+@contextmanager
+def _command(dataset_file: Path) -> Generator[None]:
+    """Log as JSON and turn an expected failure into its exit code.
+
+    The failure is one error event with its category; nothing else is
+    printed.
+    """
+    configure_logging()
+    expected = tuple(kind for kinds, _ in _CATEGORIES for kind in kinds)
+    try:
+        yield
+    except expected as error:
+        code = _exit_code(error)
+        log_error(
+            "run_failed",
+            dataset_file=str(dataset_file),
+            category=code.name.lower(),
+            exit_code=code.value,
+            error=str(error),
+        )
+        raise typer.Exit(code=code) from error
+
+
+def _exit_code(error: Exception) -> ExitCode:
+    for kinds, code in _CATEGORIES:
+        if isinstance(error, kinds):
+            return code
+    return ExitCode.INTERNAL

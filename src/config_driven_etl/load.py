@@ -7,11 +7,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import polars as pl
+import requests
 from google.api_core.exceptions import GoogleAPIError, NotFound
+from google.auth.exceptions import GoogleAuthError
 from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import bigquery_schema
 from config_driven_etl.dataset_config import DatasetConfig
+from config_driven_etl.errors import error_reason
 from config_driven_etl.transform import output_schema
 
 
@@ -29,15 +32,19 @@ def write_parquet(lf: pl.LazyFrame, destination: Path) -> None:
 
     The frame is streamed to a temporary file in the same directory and
     renamed when complete, so a failed run never leaves a truncated file
-    or removes the previous output.
+    or removes the previous output. Raises LoadError if it cannot be
+    written.
     """
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # A unique name keeps two runs of the same dataset from colliding.
-    handle, name = tempfile.mkstemp(
-        dir=destination.parent,
-        prefix=f".{destination.name}.",
-        suffix=".part",
-    )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # A unique name keeps two runs of the same dataset from colliding.
+        handle, name = tempfile.mkstemp(
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".part",
+        )
+    except OSError as error:
+        raise _write_error(destination, error) from error
     temp = Path(name)
     try:
         # Polars opens the path itself, and Windows cannot replace an
@@ -45,8 +52,16 @@ def write_parquet(lf: pl.LazyFrame, destination: Path) -> None:
         os.close(handle)
         lf.sink_parquet(temp, compression="snappy")
         temp.replace(destination)
+    except (OSError, pl.exceptions.PolarsError) as error:
+        raise _write_error(destination, error) from error
     finally:
         temp.unlink(missing_ok=True)
+
+
+def _write_error(destination: Path, error: Exception) -> LoadError:
+    return LoadError(
+        f"{destination}: cannot write Parquet: {error_reason(error)}"
+    )
 
 
 def verify_parquet(
@@ -104,8 +119,7 @@ def _read_footer(path: Path) -> tuple[dict[str, pl.DataType], int]:
         schema = pl.read_parquet_schema(path)
         rows = pl.scan_parquet(path).select(pl.len()).collect().item()
     except (OSError, pl.exceptions.PolarsError) as error:
-        lines = str(error).splitlines()
-        reason = lines[0] if lines and lines[0] else type(error).__name__
+        reason = error_reason(error)
         raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
     return schema, rows
 
@@ -243,12 +257,11 @@ def _layout_problems(
 
 @contextmanager
 def _bigquery_errors(table_id: str) -> Generator[None]:
-    """Turn Google API errors into LoadError with a clear message."""
+    """Turn Google API, auth and network errors into LoadError."""
     try:
         yield
     except GoogleAPIError as error:
-        reason = str(error).splitlines()[0] if str(error) else ""
-        lines = [f"BigQuery error: {reason or type(error).__name__}"]
+        lines = [f"BigQuery error: {error_reason(error)}"]
         # A failed load job puts the actual causes, such as the bad column,
         # in errors rather than in the message.
         details = getattr(error, "errors", None) or []
@@ -259,6 +272,11 @@ def _bigquery_errors(table_id: str) -> Generator[None]:
         ]
         raise LoadError(
             "\n".join(f"{table_id}: {line}" for line in lines)
+        ) from error
+    except (GoogleAuthError, requests.RequestException) as error:
+        # Credentials and the network fail outside the API error types.
+        raise LoadError(
+            f"{table_id}: cannot reach BigQuery: {error_reason(error)}"
         ) from error
 
 

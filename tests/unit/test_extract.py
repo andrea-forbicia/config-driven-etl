@@ -94,6 +94,33 @@ class DownloadCsvTest(unittest.TestCase):
         self.assert_no_partial_files()
         return str(context.exception)
 
+    def test_unwritable_destination_is_an_extract_error(self) -> None:
+        # A file where the raw directory should be: mkdir fails.
+        self.destination.parent.parent.mkdir(parents=True)
+        self.destination.parent.write_bytes(b"not a directory")
+        session = fake_session(fake_response(chunks=[b"a\n"]))
+
+        message = self.download_error(session)
+
+        self.assertTrue(
+            message.startswith(f"{self.destination}: cannot write file: "),
+            message,
+        )
+
+    def test_unreadable_metadata_is_ignored(self) -> None:
+        self.write_previous_run()
+        metadata_path(self.destination).mkdir()
+        session = fake_session(fake_response(chunks=[b"new"]))
+
+        message = self.download_error(session)
+
+        # Read as missing, so no If-Modified-Since; writing it then fails.
+        self.assertIn("cannot write file", message)
+
+        session.get.assert_called_once_with(
+            URL, stream=True, timeout=TIMEOUT, headers={}
+        )
+
     def test_streams_chunks_into_destination(self) -> None:
         session = fake_session(fake_response(chunks=[b"a,b\n", b"1,2\n"]))
 
@@ -320,6 +347,18 @@ class CopyCsvTest(unittest.TestCase):
         self.assert_no_partial_files()
         return str(context.exception)
 
+    def test_unwritable_destination_is_an_extract_error(self) -> None:
+        self.source.write_bytes(b"a\n")
+        self.destination.parent.parent.mkdir(parents=True)
+        self.destination.parent.write_bytes(b"not a directory")
+
+        message = self.copy_error(self.source)
+
+        self.assertTrue(
+            message.startswith(f"{self.destination}: cannot write file: "),
+            message,
+        )
+
     def test_copies_content_and_returns_size(self) -> None:
         self.source.write_bytes(b"a,b\n1,2\n")
 
@@ -417,6 +456,15 @@ class ScanRawCsvTest(unittest.TestCase):
             ),
         )
         self.assertEqual(frame.rows(), [("1", "2.5", "2026-01-01")])
+
+    def test_error_without_message_names_its_type(self) -> None:
+        error = pl.exceptions.ComputeError("")
+        with mock.patch.object(pl, "scan_csv", side_effect=error):
+            message = self.scan_error(b"id\n1\n")
+
+        self.assertEqual(
+            message, f"{self.path}: cannot read CSV: ComputeError"
+        )
 
     def test_returns_a_lazy_frame(self) -> None:
         self.path.write_bytes(b"a\n1\n")
