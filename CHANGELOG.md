@@ -195,6 +195,8 @@ and this project adheres to
   builds the Docker image and checks the version it reports, then creates
   a GitHub Release. `vX.Y.Z` takes its notes from the `[X.Y.Z]` changelog
   section; `vX.Y.Z-<suffix>` creates a pre-release from `[Unreleased]`.
+- README: architecture diagram, setup, run (local and Docker), a sample
+  query, the sandbox expiry rules, how to add a dataset, and tests.
 
 ### Fixed
 

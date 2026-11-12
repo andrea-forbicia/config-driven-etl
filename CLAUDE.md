@@ -385,7 +385,7 @@ Exit: a test tag produces a GitHub Release.
 
 Goal: `v1.0.0` published.
 
-- [ ] Final README: architecture diagram, "add a dataset" section, sample
+- [x] Final README: architecture diagram, "add a dataset" section, sample
       query, note on sandbox table expiry `[docs]`
 - [ ] `CHANGELOG.md` entry and version bump to `1.0.0` `[chore]`
 - [ ] Annotated tag `v1.0.0` on `main` *(manual)*
