@@ -1,17 +1,19 @@
 """Dataset configuration models and YAML loader."""
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     HttpUrl,
     StringConstraints,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -196,3 +198,107 @@ def _raise_if_any(problems: list[str]) -> None:
     # single pass instead of one re-run per mistake.
     if problems:
         raise ValueError("\n".join(problems))
+
+
+class DatasetConfigError(Exception):
+    """A dataset file that cannot be read or is not a valid config."""
+
+    def __init__(self, path: Path, problems: Sequence[str]) -> None:
+        self.path = path
+        self.problems = tuple(problems)
+        super().__init__(
+            "\n".join(f"{path}: {problem}" for problem in self.problems)
+        )
+
+
+def load_dataset_config(path: Path) -> DatasetConfig:
+    """Read and validate a dataset YAML file.
+
+    Raises DatasetConfigError listing every problem found.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise DatasetConfigError(
+            path, [f"cannot read file: {error.strerror}"]
+        ) from error
+    except UnicodeDecodeError as error:
+        raise DatasetConfigError(path, ["file is not valid UTF-8"]) from error
+
+    try:
+        # A SafeLoader subclass: python/* tags are still rejected.
+        data = yaml.load(text, Loader=_UniqueKeyLoader)
+    except yaml.YAMLError as error:
+        raise DatasetConfigError(path, [_format_yaml_error(error)]) from error
+
+    if data is None:
+        raise DatasetConfigError(path, ["file is empty"])
+    if not isinstance(data, dict):
+        raise DatasetConfigError(
+            path,
+            [f"top level must be a mapping, not {type(data).__name__}"],
+        )
+
+    try:
+        return DatasetConfig.model_validate(data)
+    except ValidationError as error:
+        raise DatasetConfigError(
+            path, _format_validation_error(error)
+        ) from error
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects repeated keys instead of keeping the last."""
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[Any, Any]:
+        seen = set()
+        for key_node, _ in node.value:
+            # Merge keys (<<) are resolved by the parent, and local keys
+            # may override merged ones, as in plain YAML.
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            # Unhashable keys are reported by the parent implementation.
+            if not isinstance(key, Hashable):
+                continue
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    problem=f"duplicate key '{key}'",
+                    problem_mark=key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _format_yaml_error(error: yaml.YAMLError) -> str:
+    if not isinstance(error, yaml.MarkedYAMLError):
+        # ReaderError and similar carry no line mark, only their text.
+        return str(error).splitlines()[0]
+    reason = error.problem or "invalid YAML"
+    if error.problem_mark is None:
+        return reason
+    return f"line {error.problem_mark.line + 1}: {reason}"
+
+
+def _format_validation_error(error: ValidationError) -> list[str]:
+    problems = []
+    for detail in error.errors():
+        location = _format_location(detail["loc"])
+        message = detail["msg"].removeprefix("Value error, ")
+        # Model-level validators report several problems in one message.
+        for line in message.splitlines():
+            problems.append(f"{location}: {line}" if location else line)
+    return problems
+
+
+def _format_location(location: tuple[int | str, ...]) -> str:
+    """Render a pydantic location as a path like columns[2].type."""
+    path = ""
+    for part in location:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        else:
+            path += f".{part}" if path else part
+    return path

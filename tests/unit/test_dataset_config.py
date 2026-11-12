@@ -1,7 +1,9 @@
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import ValidationError
 
 from config_driven_etl.dataset_config import (
@@ -9,7 +11,10 @@ from config_driven_etl.dataset_config import (
     Column,
     ColumnType,
     DatasetConfig,
+    DatasetConfigError,
     Source,
+    _format_yaml_error,
+    load_dataset_config,
 )
 
 
@@ -511,3 +516,205 @@ class DatasetConfigReferencesTest(unittest.TestCase):
                 "rules.deduplicate_on: 'id' is listed more than once",
             ],
         )
+
+
+VALID_YAML = """\
+name: city_weather
+source:
+  url: https://example.org/weather.csv
+columns:
+  - source: "Date"
+    name: observation_date
+    type: date
+    format: "%Y-%m-%d"
+  - source: "Temp (C)"
+    name: temperature_c
+    type: float
+    min: -90
+    max: 60
+target:
+  table: city_weather
+  partition_by: observation_date
+"""
+
+
+class LoadDatasetConfigTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+
+    def write(self, text: str) -> Path:
+        path = self.directory / "dataset.yaml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def load_problems(self, path: Path) -> tuple[str, ...]:
+        with self.assertRaises(DatasetConfigError) as context:
+            load_dataset_config(path)
+
+        self.assertEqual(context.exception.path, path)
+        return context.exception.problems
+
+    def test_valid_file(self) -> None:
+        config = load_dataset_config(self.write(VALID_YAML))
+
+        self.assertEqual(config.name, "city_weather")
+        self.assertEqual(config.columns[1].max, 60.0)
+        self.assertEqual(config.target.partition_by, "observation_date")
+
+    def test_missing_file(self) -> None:
+        problems = self.load_problems(self.directory / "missing.yaml")
+
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("cannot read file: "))
+
+    def test_file_not_utf8(self) -> None:
+        path = self.directory / "latin1.yaml"
+        path.write_bytes("name: caf\xe9\n".encode("latin-1"))
+
+        self.assertEqual(
+            self.load_problems(path), ("file is not valid UTF-8",)
+        )
+
+    def test_invalid_yaml_syntax(self) -> None:
+        problems = self.load_problems(self.write("name: [unclosed\n"))
+
+        self.assertEqual(len(problems), 1)
+        self.assertRegex(problems[0], r"^line \d+: ")
+
+    def test_duplicate_key(self) -> None:
+        text = VALID_YAML.replace(
+            "    type: float\n", "    type: float\n    type: int\n"
+        )
+
+        self.assertEqual(
+            self.load_problems(self.write(text)),
+            ("line 12: duplicate key 'type'",),
+        )
+
+    def test_control_character(self) -> None:
+        problems = self.load_problems(self.write("name: a\x07b\n"))
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn("unacceptable character", problems[0])
+
+    def test_merge_key_is_allowed_and_can_be_overridden(self) -> None:
+        text = (
+            "defaults: &defaults {type: int, nullable: false}\n"
+            + VALID_YAML.replace(
+                "    type: float\n",
+                "    <<: *defaults\n    type: float\n",
+            )
+        )
+        problems = self.load_problems(self.write(text))
+
+        # Only the unknown top-level key fails: the merge itself is valid.
+        self.assertEqual(
+            problems, ("defaults: Extra inputs are not permitted",)
+        )
+
+    def test_unhashable_key(self) -> None:
+        problems = self.load_problems(self.write("? [a, b]\n: 1\n"))
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn("found unhashable key", problems[0])
+
+    def test_yaml_error_without_position(self) -> None:
+        error = yaml.MarkedYAMLError(problem="broken")
+
+        self.assertEqual(_format_yaml_error(error), "broken")
+
+    def test_python_tags_are_rejected(self) -> None:
+        problems = self.load_problems(
+            self.write("name: !!python/object/apply:os.getcwd []\n")
+        )
+
+        self.assertEqual(len(problems), 1)
+        self.assertIn("could not determine a constructor", problems[0])
+
+    def test_same_key_in_sibling_mappings_is_allowed(self) -> None:
+        config = load_dataset_config(self.write(VALID_YAML))
+
+        self.assertEqual(len(config.columns), 2)
+
+    def test_empty_file(self) -> None:
+        for text in ["", "# only a comment\n"]:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    self.load_problems(self.write(text)), ("file is empty",)
+                )
+
+    def test_top_level_not_a_mapping(self) -> None:
+        self.assertEqual(
+            self.load_problems(self.write("- a\n- b\n")),
+            ("top level must be a mapping, not list",),
+        )
+
+    def test_field_error_has_dotted_path(self) -> None:
+        text = VALID_YAML.replace("type: float", "type: decimal")
+
+        problems = self.load_problems(self.write(text))
+
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("columns[1].type: "))
+
+    def test_column_errors_are_prefixed_with_column_path(self) -> None:
+        text = VALID_YAML.replace('    format: "%Y-%m-%d"\n', "")
+
+        self.assertEqual(
+            self.load_problems(self.write(text)),
+            ("columns[0]: 'format' is required on date columns",),
+        )
+
+    def test_source_error_is_prefixed_with_source(self) -> None:
+        text = VALID_YAML.replace(
+            "  url: https://example.org/weather.csv\n",
+            "  url: https://example.org/weather.csv\n  path: weather.csv\n",
+        )
+
+        self.assertEqual(
+            self.load_problems(self.write(text)),
+            ("source: set exactly one of 'url' or 'path'",),
+        )
+
+    def test_config_errors_are_split_one_per_line(self) -> None:
+        text = VALID_YAML.replace(
+            "  partition_by: observation_date\n",
+            "  partition_by: missing\n  cluster_by: [temperature_c]\n",
+        )
+
+        self.assertEqual(
+            self.load_problems(self.write(text)),
+            (
+                "target.partition_by: 'missing' is not a column",
+                "target.cluster_by: 'temperature_c' must not be a float "
+                "column",
+            ),
+        )
+
+    def test_every_field_error_is_reported(self) -> None:
+        text = VALID_YAML.replace("name: city_weather", "name: City").replace(
+            "type: float", "type: decimal"
+        )
+
+        problems = self.load_problems(self.write(text))
+
+        locations = [problem.split(":")[0] for problem in problems]
+        self.assertIn("name", locations)
+        self.assertIn("columns[1].type", locations)
+
+    def test_message_prefixes_every_line_with_the_file(self) -> None:
+        text = VALID_YAML.replace(
+            "  partition_by: observation_date\n",
+            "  partition_by: missing\n  cluster_by: [temperature_c]\n",
+        )
+        path = self.write(text)
+
+        with self.assertRaises(DatasetConfigError) as context:
+            load_dataset_config(path)
+
+        lines = str(context.exception).splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertTrue(line.startswith(f"{path}: target."))
