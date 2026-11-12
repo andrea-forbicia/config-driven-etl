@@ -165,6 +165,11 @@ and this project adheres to
   `LoadError`, and the raw CSV download and copy report file system
   errors (permissions, a full disk) as `ExtractError`; unreadable
   download metadata only causes a fresh download.
+- System tests run `run` end to end on both fixture datasets against an
+  in-memory BigQuery fake that reads the loaded Parquet back. They check
+  the Parquet schema, row count and values, the loaded data, the
+  partitioning and clustering sent to BigQuery, one log line per stage,
+  and that a second run leaves the same state.
 
 ### Fixed
 

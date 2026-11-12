@@ -361,7 +361,7 @@ Goal: a CLI and container that behave like a product.
 - [x] Structured JSON logging, one line per stage with row counts and
       duration `[feat]`
 - [x] Distinct exit codes per error category, documented in `--help` `[feat]`
-- [ ] System tests on both fixture datasets, BigQuery faked `[test]`
+- [x] System tests on both fixture datasets, BigQuery faked `[test]`
 - [ ] Coverage at or above 85% on `src/` `[test]`
 - [ ] Dockerfile: slim image, non-root user, dataset file as argument,
       credentials mounted at runtime, never baked in `[build]`
