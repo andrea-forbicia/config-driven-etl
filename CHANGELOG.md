@@ -137,5 +137,12 @@ and this project adheres to
   footer), and raises `LoadError` otherwise. For a partitioned table the
   error points at partition expiration: BigQuery silently drops rows in
   expired partitions, after 60 days in the sandbox.
+- `gcp` test (`pytest -m gcp`): loads both fixture datasets into unique
+  temporary tables in the BigQuery sandbox twice, checks the row count
+  and that the table data equals the Parquet file after each load, and
+  deletes the tables. Partition dates are shifted to recent days so the
+  sandbox's 60-day partition expiration does not drop them. Skipped
+  without `GCP_PROJECT_ID`, `BQ_DATASET` or application default
+  credentials.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

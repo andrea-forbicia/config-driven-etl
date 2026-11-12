@@ -81,6 +81,7 @@ config-driven-etl/
 ├── tests/
 │   ├── unit/                 # no I/O, no network
 │   ├── system/               # full pipeline on fixture datasets
+│   ├── gcp/                  # real BigQuery sandbox, marker gcp
 │   └── fixtures/             # small CSV files + matching YAML configs
 ├── data/                     # raw/ and processed/, git-ignored
 ├── .env.example
@@ -344,7 +345,7 @@ Goal: idempotent loads into the BigQuery sandbox.
       config `[feat]`
 - [x] Load Parquet with a load job, explicit schema, `WRITE_TRUNCATE` `[feat]`
 - [x] Verify the loaded row count against the Parquet row count `[feat]`
-- [ ] `gcp` test: unique temporary table, deleted afterwards, skipped without
+- [x] `gcp` test: unique temporary table, deleted afterwards, skipped without
       credentials `[test]`
 
 Exit: both real datasets load into the sandbox; a second run leaves the same
