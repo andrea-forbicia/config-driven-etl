@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 7 — CI/CD**
+**Current phase: 8 — Release**
 
 How to use this plan:
 
