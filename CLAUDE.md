@@ -247,8 +247,8 @@ Goal: an empty but installable, linted, and tested project on a protected
 
 - [x] Pick two public datasets with different shapes: direct CSV URL with no
       login (data.gov or Socrata portals; Kaggle requires authentication),
-      real dirty values, at least one `date`/`datetime` column, under ~100 MB
-      *(manual)*
+      real dirty values, a `date`/`datetime` column in at least one of them,
+      under ~100 MB *(manual)*
 - [x] Bootstrap commit on `main`: `.gitignore`, `LICENSE`, `CLAUDE.md`,
       placeholder `README.md` with source and license of both datasets
       *(the only direct commit to `main`)*
@@ -279,7 +279,7 @@ Goal: any YAML file can be validated without touching data.
       numeric types; `format` only on `date` / `datetime` `[feat]`
 - [x] YAML loader with clear errors (file, field path, reason) `[feat]`
 - [x] `datasets/example.yaml` documenting every option `[docs]`
-- [ ] YAML files for the two real datasets `[feat]`
+- [x] YAML files for the two real datasets `[feat]`
 - [ ] `validate` CLI command, non-zero exit on an invalid file `[feat]`
 
 Exit: `validate` passes on every file in `datasets/` and fails with a clear

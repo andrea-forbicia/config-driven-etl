@@ -1,0 +1,105 @@
+# USGS earthquakes of the past 30 days, a rolling feed.
+# Source: U.S. Geological Survey, public domain.
+name: usgs_earthquakes
+source:
+  url: https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.csv
+columns:
+  - source: "time"
+    name: time
+    type: datetime
+    format: "%Y-%m-%dT%H:%M:%S%.fZ"
+    nullable: false
+  - source: "latitude"
+    name: latitude
+    type: float
+    min: -90
+    max: 90
+    nullable: false
+  - source: "longitude"
+    name: longitude
+    type: float
+    min: -180
+    max: 180
+    nullable: false
+  # Kilometres; negative values are events above sea level.
+  - source: "depth"
+    name: depth
+    type: float
+    min: -10
+    max: 1000
+    nullable: false
+  - source: "mag"
+    name: mag
+    type: float
+    min: -10
+    max: 10
+    nullable: false
+  - source: "magType"
+    name: mag_type
+    type: string
+  - source: "nst"
+    name: nst
+    type: int
+    min: 0
+  - source: "gap"
+    name: gap
+    type: float
+    min: 0
+    max: 360
+  - source: "dmin"
+    name: dmin
+    type: float
+    min: 0
+  - source: "rms"
+    name: rms
+    type: float
+    min: 0
+  - source: "net"
+    name: net
+    type: string
+  - source: "id"
+    name: id
+    type: string
+    nullable: false
+  - source: "updated"
+    name: updated
+    type: datetime
+    format: "%Y-%m-%dT%H:%M:%S%.fZ"
+  - source: "place"
+    name: place
+    type: string
+  - source: "type"
+    name: type
+    type: string
+  - source: "horizontalError"
+    name: horizontal_error
+    type: float
+    min: 0
+  - source: "depthError"
+    name: depth_error
+    type: float
+    min: 0
+  - source: "magError"
+    name: mag_error
+    type: float
+    min: 0
+  - source: "magNst"
+    name: mag_nst
+    type: int
+    min: 0
+  - source: "status"
+    name: status
+    type: string
+  - source: "locationSource"
+    name: location_source
+    type: string
+  - source: "magSource"
+    name: mag_source
+    type: string
+rules:
+  deduplicate_on: [id]
+  drop_unmapped_columns: false
+target:
+  table: usgs_earthquakes
+  partition_by: time
+  cluster_by: [net, type]

@@ -1,0 +1,72 @@
+# Battery and plug-in hybrid electric vehicles registered with the
+# Washington State Department of Licensing.
+# Source: data.wa.gov (f6w7-q2d2), ODbL 1.0.
+name: wa_ev_population
+source:
+  url: https://data.wa.gov/api/views/f6w7-q2d2/rows.csv?accessType=DOWNLOAD
+columns:
+  - source: "VIN (1-10)"
+    name: vin_1_10
+    type: string
+    nullable: false
+  - source: "County"
+    name: county
+    type: string
+  - source: "City"
+    name: city
+    type: string
+  - source: "State"
+    name: state
+    type: string
+  # Codes, not quantities: kept as strings.
+  - source: "Postal Code"
+    name: postal_code
+    type: string
+  - source: "Model Year"
+    name: model_year
+    type: int
+    min: 1990
+    max: 2030
+    nullable: false
+  - source: "Make"
+    name: make
+    type: string
+    nullable: false
+  - source: "Model"
+    name: model
+    type: string
+  - source: "Electric Vehicle Type"
+    name: electric_vehicle_type
+    type: string
+  - source: "Clean Alternative Fuel Vehicle (CAFV) Eligibility"
+    name: cafv_eligibility
+    type: string
+  # Miles; 0 means the range has not been researched.
+  - source: "Electric Range"
+    name: electric_range
+    type: int
+    min: 0
+  - source: "Legislative District"
+    name: legislative_district
+    type: string
+  - source: "DOL Vehicle ID"
+    name: dol_vehicle_id
+    type: int
+    min: 1
+    nullable: false
+  # WKT point, "POINT (longitude latitude)".
+  - source: "Vehicle Location"
+    name: vehicle_location
+    type: string
+  - source: "Electric Utility"
+    name: electric_utility
+    type: string
+  - source: "2020 GEOID"
+    name: geoid_2020
+    type: string
+rules:
+  deduplicate_on: [dol_vehicle_id]
+  drop_unmapped_columns: false
+target:
+  table: wa_ev_population
+  cluster_by: [county, make]

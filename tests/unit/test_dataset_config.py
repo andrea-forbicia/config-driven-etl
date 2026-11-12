@@ -739,3 +739,16 @@ class ExampleDatasetConfigTest(unittest.TestCase):
             for field in model.model_fields:
                 with self.subTest(model=model.__name__, field=field):
                     self.assertIn(f"{field}:", text)
+
+
+class CommittedDatasetConfigsTest(unittest.TestCase):
+    def test_every_dataset_file_is_valid(self) -> None:
+        paths = sorted(EXAMPLE_PATH.parent.glob("*.yaml"))
+        self.assertTrue(
+            {"example", "usgs_earthquakes", "wa_ev_population"}
+            <= {path.stem for path in paths}
+        )
+
+        for path in paths:
+            with self.subTest(path=path.name):
+                load_dataset_config(path)
