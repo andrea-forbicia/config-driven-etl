@@ -4,11 +4,18 @@ from collections.abc import Callable, Sequence
 
 import polars as pl
 
-from config_driven_etl.dataset_config import ColumnType, DatasetConfig
+from config_driven_etl.dataset_config import (
+    Column,
+    ColumnType,
+    DatasetConfig,
+)
 
 # List of rejection reasons per row. The '#' keeps it apart from target
 # names, which are lowercase identifiers.
 REJECTIONS = "#rejections"
+
+# Earlier dates and datetimes are rejected as malformed.
+MIN_YEAR = 1000
 
 
 class TransformError(Exception):
@@ -49,24 +56,24 @@ def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
 
 
 def cast_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
-    """Cast string, int, float and bool columns to their Polars types.
+    """Cast every mapped column to the Polars type of its config type.
 
-    Int, float and bool values are trimmed and blank ones become null. A
-    value that cannot be cast becomes null and adds the reason
-    '<name>: invalid <type>' to the row's REJECTIONS list. Date, datetime
-    and unmapped columns are left as strings.
+    Date and datetime values are parsed with the column's format;
+    datetimes have microsecond precision, offsets become naive UTC, and
+    years before MIN_YEAR are invalid. Non-string values are trimmed
+    and blank ones become null. A value that cannot be cast becomes null
+    and adds the reason '<name>: invalid <type>' to the row's REJECTIONS
+    list. String values and unmapped columns are left as written.
     """
     casts: dict[str, pl.Expr] = {}
     reasons: list[pl.Expr] = []
     for column in config.columns:
-        # String columns are already strings and keep their spaces;
-        # temporal columns need a format and are parsed separately.
         cast = _CASTS.get(column.type)
         if cast is None:
             continue
         trimmed = pl.col(column.name).str.strip_chars()
         value = pl.when(trimmed != "").then(trimmed)
-        typed = cast(value)
+        typed = cast(value, column)
         casts[column.name] = typed
         reasons.append(
             pl.when(value.is_not_null() & typed.is_null()).then(
@@ -77,18 +84,18 @@ def cast_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     return lf.with_columns(_rejections(lf, reasons), **casts)
 
 
-def _to_int(value: pl.Expr) -> pl.Expr:
+def _to_int(value: pl.Expr, column: Column) -> pl.Expr:
     return value.cast(pl.Int64, strict=False)
 
 
-def _to_float(value: pl.Expr) -> pl.Expr:
+def _to_float(value: pl.Expr, column: Column) -> pl.Expr:
     number = value.cast(pl.Float64, strict=False)
     # "nan" and "inf" parse as floats but are rarely meant as data, and
     # NaN would slip through min / max comparisons.
     return pl.when(number.is_finite()).then(number)
 
 
-def _to_bool(value: pl.Expr) -> pl.Expr:
+def _to_bool(value: pl.Expr, column: Column) -> pl.Expr:
     lowered = value.str.to_lowercase()
     return (
         pl.when(lowered == "true")
@@ -98,10 +105,31 @@ def _to_bool(value: pl.Expr) -> pl.Expr:
     )
 
 
-_CASTS: dict[ColumnType, Callable[[pl.Expr], pl.Expr]] = {
+def _to_date(value: pl.Expr, column: Column) -> pl.Expr:
+    return _plausible_year(value.str.to_date(column.format, strict=False))
+
+
+def _to_datetime(value: pl.Expr, column: Column) -> pl.Expr:
+    # BigQuery stores microseconds; finer input would be truncated anyway.
+    parsed = value.str.to_datetime(column.format, time_unit="us", strict=False)
+    # Offsets (%z) are converted to UTC by the parser; dropping the zone
+    # keeps one datetime dtype whatever the format.
+    return _plausible_year(parsed.dt.replace_time_zone(None))
+
+
+def _plausible_year(parsed: pl.Expr) -> pl.Expr:
+    # %Y also accepts two- or three-digit years, so "26-01-02" would
+    # silently become year 26 instead of being rejected.
+    return pl.when(parsed.dt.year() >= MIN_YEAR).then(parsed)
+
+
+# String columns are already strings and keep their spaces.
+_CASTS: dict[ColumnType, Callable[[pl.Expr, Column], pl.Expr]] = {
     ColumnType.INT: _to_int,
     ColumnType.FLOAT: _to_float,
     ColumnType.BOOL: _to_bool,
+    ColumnType.DATE: _to_date,
+    ColumnType.DATETIME: _to_datetime,
 }
 
 

@@ -74,5 +74,11 @@ and this project adheres to
   `true` / `false` in any case; floats reject `nan` and `inf`. A value
   that cannot be cast becomes null and its row gets the reason
   `<name>: invalid <type>` in the `#rejections` list column.
+- `cast_columns` also parses `date` and `datetime` columns with the
+  column's `format` into `Date` and microsecond `Datetime`, with the same
+  trimming, blank-to-null and rejection reasons as the other types.
+  Datetimes with an offset (`%z`) are converted to UTC and stored without
+  a time zone, so the dtype does not depend on the format. Years before
+  1000 are rejected, since `%Y` also accepts two- and three-digit years.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
