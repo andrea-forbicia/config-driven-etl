@@ -103,6 +103,10 @@ and this project adheres to
 - `split_rejected` returns a `TransformResult` with three lazy frames:
   `valid` rows without the `#rejections` column, `rejected` rows with
   their reasons, and `rejection_counts` with the number of rows per
-  reason (`reason`, `rows`), most frequent first.
+  reason (`reason`, `rows`), most frequent first. The frames share a
+  cached plan, so collecting them with `pl.collect_all` reads the input
+  once.
+- `transform(lf, config)` runs every step in order (select, cast,
+  nullable, range, duplicates) and returns the `TransformResult`.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main

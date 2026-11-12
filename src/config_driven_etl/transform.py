@@ -189,7 +189,8 @@ def split_rejected(lf: pl.LazyFrame) -> TransformResult:
     number of rows it rejected, most frequent first, so a row with two
     reasons counts once under each.
     """
-    lf = lf.with_columns(_rejections(lf, []))
+    # Cached so the valid and rejected frames share one read of the input.
+    lf = lf.with_columns(_rejections(lf, [])).cache()
     is_valid = pl.col(REJECTIONS).list.len() == 0
     rejected = lf.filter(~is_valid)
     counts = (
@@ -203,6 +204,21 @@ def split_rejected(lf: pl.LazyFrame) -> TransformResult:
         rejected=rejected,
         rejection_counts=counts,
     )
+
+
+def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
+    """Turn raw string columns into typed, clean rows.
+
+    Applies every rule of the config and splits the result into valid
+    rows, rejected rows and rejection counts. Raises TransformError if
+    the input columns do not match the config.
+    """
+    lf = select_columns(lf, config)
+    # Duplicates come last: only rows that passed every other rule may
+    # claim a key.
+    for step in (cast_columns, check_nullable, check_range, check_duplicates):
+        lf = step(lf, config)
+    return split_rejected(lf)
 
 
 def _invalid_reason(column: Column) -> str:

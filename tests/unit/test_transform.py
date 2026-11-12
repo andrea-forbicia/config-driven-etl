@@ -15,6 +15,7 @@ from config_driven_etl.transform import (
     check_range,
     select_columns,
     split_rejected,
+    transform,
 )
 
 TEMPORAL_FORMATS = {"date": "%Y-%m-%d", "datetime": "%Y-%m-%d %H:%M:%S"}
@@ -800,6 +801,126 @@ class SplitRejectedTest(unittest.TestCase):
             result.rejection_counts,
         ):
             self.assertIsInstance(frame, pl.LazyFrame)
+
+
+class TransformTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = DatasetConfig.model_validate(
+            {
+                "name": "sample",
+                "source": {"url": "https://example.org/sample.csv"},
+                "columns": [
+                    {
+                        "source": "ID",
+                        "name": "id",
+                        "type": "int",
+                        "nullable": False,
+                    },
+                    {
+                        "source": "Day",
+                        "name": "day",
+                        "type": "date",
+                        "format": "%d/%m/%Y",
+                    },
+                    {
+                        "source": "Score",
+                        "name": "score",
+                        "type": "float",
+                        "min": 0,
+                        "max": 10,
+                    },
+                ],
+                "rules": {"deduplicate_on": ["id"]},
+                "target": {"table": "sample"},
+            }
+        )
+        self.raw = raw_frame(
+            {
+                "ID": ["1", "2", "x", None, "1", "3", "4", "4"],
+                "Day": [
+                    "01/01/2026",
+                    "02/01/2026",
+                    "03/01/2026",
+                    "04/01/2026",
+                    "05/01/2026",
+                    "2026-01-06",
+                    "07/01/2026",
+                    "08/01/2026",
+                ],
+                "Score": ["5", "10", "1", "1", "1", "1", "11", "2"],
+                "Notes": ["n"] * 8,
+            }
+        )
+
+    def collect(self) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+        result = transform(self.raw, self.config)
+        valid, rejected, counts = pl.collect_all(
+            [result.valid, result.rejected, result.rejection_counts]
+        )
+        return valid, rejected, counts
+
+    def test_valid_rows_are_typed_and_renamed(self) -> None:
+        valid, _, _ = self.collect()
+
+        self.assertEqual(
+            valid.schema,
+            pl.Schema({"id": pl.Int64, "day": pl.Date, "score": pl.Float64}),
+        )
+        self.assertEqual(
+            valid.rows(),
+            [
+                (1, date(2026, 1, 1), 5.0),
+                (2, date(2026, 1, 2), 10.0),
+                (4, date(2026, 1, 8), 2.0),
+            ],
+        )
+
+    def test_every_rule_rejects_its_rows(self) -> None:
+        _, rejected, _ = self.collect()
+
+        self.assertEqual(
+            rejected[REJECTIONS].to_list(),
+            [
+                ["id: invalid int"],
+                ["id: null"],
+                ["id: duplicate"],
+                ["day: invalid date"],
+                ["score: above max"],
+            ],
+        )
+
+    def test_counts_rejections_by_reason(self) -> None:
+        _, _, counts = self.collect()
+
+        self.assertEqual(
+            counts.rows(),
+            [
+                ("day: invalid date", 1),
+                ("id: duplicate", 1),
+                ("id: invalid int", 1),
+                ("id: null", 1),
+                ("score: above max", 1),
+            ],
+        )
+
+    def test_every_input_row_is_valid_or_rejected(self) -> None:
+        valid, rejected, _ = self.collect()
+
+        self.assertEqual(valid.height + rejected.height, 8)
+
+    def test_missing_source_column_fails_before_reading(self) -> None:
+        with self.assertRaises(TransformError):
+            transform(self.raw.drop("Score"), self.config)
+
+    def test_empty_input(self) -> None:
+        self.raw = self.raw.head(0)
+
+        valid, rejected, counts = self.collect()
+
+        self.assertEqual(valid.columns, ["id", "day", "score"])
+        self.assertEqual(
+            (valid.height, rejected.height, counts.height), (0, 0, 0)
+        )
 
 
 if __name__ == "__main__":
