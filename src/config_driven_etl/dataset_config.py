@@ -134,9 +134,20 @@ class DatasetConfig(_StrictModel):
 
     name: Identifier
     source: Source
-    columns: tuple[Column, ...] = Field(min_length=1)
+    columns: tuple[Column, ...]
     rules: Rules = Field(default_factory=Rules)
     target: Target
+
+    # Not Field(min_length=1): pydantic counts only the items that passed,
+    # so one invalid column would also be reported as "no columns".
+    @field_validator("columns")
+    @classmethod
+    def _require_columns(
+        cls, columns: tuple[Column, ...]
+    ) -> tuple[Column, ...]:
+        if not columns:
+            raise ValueError("at least one column is required")
+        return columns
 
     @model_validator(mode="after")
     def _check_references(self) -> Self:

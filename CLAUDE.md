@@ -228,7 +228,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 1 — Dataset config**
+**Current phase: 2 — Extract**
 
 How to use this plan:
 
@@ -280,7 +280,7 @@ Goal: any YAML file can be validated without touching data.
 - [x] YAML loader with clear errors (file, field path, reason) `[feat]`
 - [x] `datasets/example.yaml` documenting every option `[docs]`
 - [x] YAML files for the two real datasets `[feat]`
-- [ ] `validate` CLI command, non-zero exit on an invalid file `[feat]`
+- [x] `validate` CLI command, non-zero exit on an invalid file `[feat]`
 
 Exit: `validate` passes on every file in `datasets/` and fails with a clear
 message on each invalid fixture.

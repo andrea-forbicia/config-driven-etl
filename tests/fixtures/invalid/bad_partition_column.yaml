@@ -1,0 +1,11 @@
+# Invalid: the partition column is not a date or datetime column.
+name: bad_partition_column
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+target:
+  table: bad_partition_column
+  partition_by: id

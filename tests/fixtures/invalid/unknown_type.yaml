@@ -1,0 +1,10 @@
+# Invalid: column type outside the closed set.
+name: unknown_type
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Price
+    name: price
+    type: decimal
+target:
+  table: unknown_type

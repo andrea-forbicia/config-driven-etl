@@ -41,5 +41,9 @@ and this project adheres to
 - Dataset configs for USGS earthquakes of the past 30 days
   (`usgs_earthquakes`, partitioned by event time) and the Washington State
   electric vehicle population (`wa_ev_population`, not partitioned).
+- `validate` CLI command: checks one or more dataset files, or every
+  `*.yaml` file in a directory, prints `ok: <file>` for each valid file and
+  every problem to stderr, and exits with code 1 if any file is invalid or a
+  directory has no dataset files.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
