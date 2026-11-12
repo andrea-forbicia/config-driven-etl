@@ -20,5 +20,8 @@ and this project adheres to
 - Runtime `Settings` loaded from environment variables or a local `.env`
   file (`GCP_PROJECT_ID`, `BQ_DATASET`, `DATA_DIR`), and `.env.example`
   listing every key.
+- Dataset config models (`DatasetConfig`, `Source`, `Column`, `Rules`,
+  `Target`) with a closed `ColumnType` enum, lowercase snake_case names,
+  and rejection of unknown keys.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
