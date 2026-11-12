@@ -17,5 +17,8 @@ and this project adheres to
 - CI workflow running ruff check, ruff format check and unit tests on pull
   requests and pushes to `main`.
 - This changelog.
+- Runtime `Settings` loaded from environment variables or a local `.env`
+  file (`GCP_PROJECT_ID`, `BQ_DATASET`, `DATA_DIR`), and `.env.example`
+  listing every key.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
