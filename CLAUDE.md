@@ -228,7 +228,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 2 — Extract**
+**Current phase: 3 — Transform**
 
 How to use this plan:
 
@@ -296,7 +296,7 @@ Goal: the raw CSV of any configured dataset lands in `data/raw/<name>/`.
       between ETag / Last-Modified and content hash) `[feat]`
 - [x] Read the raw CSV into a `LazyFrame` with delimiter and encoding from the
       config, every column as string `[feat]`
-- [ ] Fixture CSVs for two different shapes with dirty rows (nulls, malformed
+- [x] Fixture CSVs for two different shapes with dirty rows (nulls, malformed
       dates, out-of-range values, duplicates, extra columns) and matching YAML
       `[test]`
 

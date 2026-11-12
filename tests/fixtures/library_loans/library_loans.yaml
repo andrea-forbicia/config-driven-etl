@@ -1,0 +1,62 @@
+# Fixture: semicolon-separated library loans, not partitioned, with an
+# extra source column that is dropped and one Latin-1 byte (row 5) read
+# with lossy UTF-8 decoding.
+#
+# Expected outcome per data row (header excluded); each dirty row has a
+# single problem so its rejection reason is unambiguous.
+#   1  valid
+#   2  valid       title contains the delimiter inside quotes
+#   3  rejected    loan_date: ISO date, not %d/%m/%Y
+#   4  rejected    branch_code: null in a non-nullable column
+#   5  valid       title "Caf\ufffd society" after lossy decoding
+#   6  rejected    fine_eur: -1.00 below min 0
+#   7  rejected    loan_date: 31/02/2026 does not exist
+#   8  rejected    renewals: 7 above max 5
+#   9  rejected    duplicate loan_id 1002 (row 2 is kept)
+#  10  rejected    loan_id: "abc" is not an int
+#  11  rejected    fine_eur: "1,5" uses a decimal comma
+#  12  valid       empty title, which is nullable; 5 on the inclusive max
+# Totals: 12 rows, 4 valid, 8 rejected. "Internal Note" is dropped.
+name: library_loans
+source:
+  path: library_loans.csv
+  delimiter: ";"
+  encoding: utf-8-lossy
+columns:
+  - source: "Loan No"
+    name: loan_id
+    type: int
+    min: 1
+    nullable: false
+  # Codes keep their leading zeros.
+  - source: "Branch Code"
+    name: branch_code
+    type: string
+    nullable: false
+  - source: "Title"
+    name: title
+    type: string
+  - source: "Loan Date"
+    name: loan_date
+    type: date
+    format: "%d/%m/%Y"
+    nullable: false
+  - source: "Due Date"
+    name: due_date
+    type: date
+    format: "%d/%m/%Y"
+  - source: "Fine (EUR)"
+    name: fine_eur
+    type: float
+    min: 0
+  - source: "Renewals"
+    name: renewals
+    type: int
+    min: 0
+    max: 5
+rules:
+  deduplicate_on: [loan_id]
+  drop_unmapped_columns: true
+target:
+  table: library_loans
+  cluster_by: [branch_code]

@@ -9,7 +9,7 @@ from unittest import mock
 import polars as pl
 import requests
 
-from config_driven_etl.dataset_config import Source
+from config_driven_etl.dataset_config import Source, load_dataset_config
 from config_driven_etl.extract import (
     CHUNK_SIZE,
     TIMEOUT,
@@ -503,3 +503,57 @@ class ScanRawCsvTest(unittest.TestCase):
                     message.startswith(f"{self.path}: cannot read CSV: "),
                     message,
                 )
+
+
+FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
+
+
+class FixtureExtractTest(unittest.TestCase):
+    """Extract both fixture datasets end to end, without network."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.data_dir = Path(directory.name)
+
+    def extract(self, name: str) -> pl.DataFrame:
+        config = load_dataset_config(FIXTURES_DIR / name / f"{name}.yaml")
+        assert config.source.path is not None
+        destination = raw_csv_path(self.data_dir, config.name)
+
+        copy_csv(config.source.path, destination)
+
+        return scan_raw_csv(destination, config.source).collect()
+
+    def test_sensor_readings(self) -> None:
+        frame = self.extract("sensor_readings")
+
+        self.assertEqual(frame.height, 11)
+        self.assertEqual(
+            frame.columns,
+            [
+                "Reading ID",
+                "Sensor",
+                "Timestamp",
+                "Temperature (C)",
+                "Humidity",
+                "Online",
+            ],
+        )
+        self.assertEqual(set(frame.dtypes), {pl.String})
+
+    def test_library_loans(self) -> None:
+        frame = self.extract("library_loans")
+
+        self.assertEqual(frame.height, 12)
+        self.assertEqual(frame.columns[-1], "Internal Note")
+        self.assertEqual(set(frame.dtypes), {pl.String})
+        self.assertEqual(frame["Title"][1], "Guerra; pace")
+        self.assertEqual(frame["Title"][4], "Caf\ufffd society")
+        self.assertEqual(frame["Branch Code"][0], "007")
+
+    def test_fixtures_have_different_shapes(self) -> None:
+        sensors = self.extract("sensor_readings")
+        loans = self.extract("library_loans")
+
+        self.assertTrue(set(sensors.columns).isdisjoint(loans.columns))
