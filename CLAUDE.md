@@ -374,7 +374,7 @@ Goal: every pull request is fully checked; releases are automatic.
 
 - [x] Extend `ci.yml`: validate `datasets/`, system tests, coverage threshold,
       Docker build `[ci]`
-- [ ] GCP authentication for `gcp` tests on `main` only (Workload Identity
+- [x] GCP authentication for `gcp` tests on `main` only (Workload Identity
       Federation preferred) `[ci]`
 - [x] `release.yml` on `v*` tags: CI, image build, GitHub Release from the
       changelog `[ci]`
