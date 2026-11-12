@@ -135,6 +135,38 @@ def check_range(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     return lf.with_columns(_rejections(lf, reasons))
 
 
+def check_duplicates(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Reject repeated keys from rules.deduplicate_on.
+
+    Only rows not rejected yet take part, so this runs after the other
+    rules: the first valid row of each key is kept and later ones get
+    '<keys>: duplicate'. Keys compare typed values: strings exactly as
+    written, spaces included. Null key values match each other.
+    """
+    keys = list(config.rules.deduplicate_on)
+    if not keys:
+        return lf.with_columns(_rejections(lf, []))
+    # Without earlier rules every row is still valid.
+    valid = (
+        pl.col(REJECTIONS).fill_null([]).list.len() == 0
+        if REJECTIONS in lf.collect_schema().names()
+        else pl.lit(True)
+    )
+    types = {column.name: column.type for column in config.columns}
+    # Windows group floats bitwise, so -0.0 would differ from 0.0;
+    # adding 0.0 turns -0.0 into 0.0.
+    key_values = [
+        pl.col(key) + 0.0 if types[key] is ColumnType.FLOAT else pl.col(key)
+        for key in keys
+    ]
+    # Rejected rows sit in their own partition, so they never claim a key.
+    seen_before = pl.int_range(pl.len()).over(valid, *key_values) > 0
+    reason = pl.when(valid & seen_before).then(
+        pl.lit(f"{', '.join(keys)}: duplicate")
+    )
+    return lf.with_columns(_rejections(lf, [reason]))
+
+
 def _invalid_reason(column: Column) -> str:
     return f"{column.name}: invalid {column.type}"
 

@@ -316,7 +316,7 @@ they rejected.
       data is read `[feat]`
 - [x] `nullable` rule `[feat]`
 - [x] `min` / `max` range rule `[feat]`
-- [ ] `deduplicate_on` rule `[feat]`
+- [x] `deduplicate_on` rule `[feat]`
 - [ ] Split valid and rejected rows, count rejections by reason `[feat]`
 - [ ] Single `transform(lf, config)` entry point composing the steps
       `[refactor]`

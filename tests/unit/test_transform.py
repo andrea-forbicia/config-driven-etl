@@ -10,6 +10,7 @@ from config_driven_etl.transform import (
     REJECTIONS,
     TransformError,
     cast_columns,
+    check_duplicates,
     check_nullable,
     check_range,
     select_columns,
@@ -23,12 +24,13 @@ def typed_config(
     formats: dict[str, str] | None = None,
     required: Iterable[str] = (),
     bounds: dict[str, dict[str, float]] | None = None,
+    deduplicate_on: Iterable[str] = (),
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
     Columns in required are not nullable; bounds maps a column to its
-    min and max keys.
+    min and max keys; deduplicate_on lists the key columns.
     """
     formats = formats or {}
     bounds = bounds or {}
@@ -49,6 +51,7 @@ def typed_config(
             "name": "sample",
             "source": {"url": "https://example.org/sample.csv"},
             "columns": columns,
+            "rules": {"deduplicate_on": list(deduplicate_on)},
             "target": {"table": "sample"},
         }
     )
@@ -623,6 +626,102 @@ class CheckRangeTest(unittest.TestCase):
         lf = cast_columns(raw_frame({"i": ["1"]}), config)
 
         self.assertIsInstance(check_range(lf, config), pl.LazyFrame)
+
+
+def dedupe(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    keys: Iterable[str],
+) -> list[list[str]]:
+    """Rejection lists after cast_columns and check_duplicates."""
+    config = typed_config(types, deduplicate_on=keys)
+    lf = cast_columns(raw_frame(data), config)
+    return check_duplicates(lf, config).collect()[REJECTIONS].to_list()
+
+
+class CheckDuplicatesTest(unittest.TestCase):
+    def test_keeps_the_first_row_of_each_key(self) -> None:
+        reasons = dedupe(
+            {"k": "string"}, {"k": ["a", "b", "a", "a", "b"]}, ["k"]
+        )
+
+        self.assertEqual(
+            reasons,
+            [[], [], ["k: duplicate"], ["k: duplicate"], ["k: duplicate"]],
+        )
+
+    def test_composite_key(self) -> None:
+        reasons = dedupe(
+            {"d": "date", "s": "string"},
+            {
+                "d": ["2026-01-01", "2026-01-01", "2026-01-02", "2026-01-01"],
+                "s": ["x", "y", "x", "x"],
+            },
+            ["d", "s"],
+        )
+
+        self.assertEqual(reasons, [[], [], [], ["d, s: duplicate"]])
+
+    def test_compares_typed_values(self) -> None:
+        reasons = dedupe({"i": "int"}, {"i": ["1", " 1", "+1"]}, ["i"])
+
+        self.assertEqual(reasons, [[], ["i: duplicate"], ["i: duplicate"]])
+
+    def test_float_zero_and_negative_zero_match(self) -> None:
+        reasons = dedupe({"f": "float"}, {"f": ["0", "-0", "-0.0"]}, ["f"])
+
+        self.assertEqual(reasons, [[], ["f: duplicate"], ["f: duplicate"]])
+
+    def test_string_keys_keep_spaces(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": ["a", "a "]}, ["k"])
+
+        self.assertEqual(reasons, [[], []])
+
+    def test_null_keys_match_each_other(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": [None, "a", None]}, ["k"])
+
+        self.assertEqual(reasons, [[], [], ["k: duplicate"]])
+
+    def test_rejected_rows_do_not_claim_the_key(self) -> None:
+        reasons = dedupe(
+            {"k": "string", "i": "int"},
+            {"k": ["a", "a", "a"], "i": ["abc", "1", "2"]},
+            ["k"],
+        )
+
+        self.assertEqual(reasons, [["i: invalid int"], [], ["k: duplicate"]])
+
+    def test_without_keys_rejects_nothing(self) -> None:
+        reasons = dedupe({"k": "string"}, {"k": ["a", "a"]}, [])
+
+        self.assertEqual(reasons, [[], []])
+
+    def test_works_without_earlier_rejections(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+
+        result = check_duplicates(raw_frame({"k": ["a", "a"]}), config)
+
+        self.assertEqual(
+            result.collect()[REJECTIONS].to_list(), [[], ["k: duplicate"]]
+        )
+
+    def test_does_not_change_or_reorder_rows(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+        lf = raw_frame({"k": ["b", "a", "b"]})
+
+        result = check_duplicates(lf, config).collect()
+
+        self.assertEqual(result["k"].to_list(), ["b", "a", "b"])
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(dedupe({"k": "string"}, {"k": []}, ["k"]), [])
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"k": "string"}, deduplicate_on=["k"])
+
+        result = check_duplicates(raw_frame({"k": ["a"]}), config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
 
 
 if __name__ == "__main__":
