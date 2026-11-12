@@ -1,0 +1,104 @@
+# Example dataset config documenting every option.
+#
+# The dataset is fictional: this file passes `validate` but cannot be run.
+# Copy it to datasets/<name>.yaml to describe a new dataset.
+#
+# Names (name, target.table, column names and every reference to them) must
+# be lowercase snake_case: a letter or underscore, then letters, digits or
+# underscores, at most 128 characters. Unknown keys are rejected.
+
+# Dataset identifier, also used for data/raw/<name>/ and
+# data/processed/<name>/. Required.
+name: city_weather
+
+# Where the raw CSV comes from. Required.
+source:
+  # Set exactly one of url or path.
+  # url: HTTP(S) address downloaded at extract time.
+  # path: local file, relative to the working directory.
+  url: https://example.org/city_weather.csv
+  # path: data/raw/city_weather/city_weather.csv
+
+  # Field separator, a single ASCII character. Default: ",".
+  # Use "\t" for tab-separated files.
+  delimiter: ","
+
+  # File encoding. Default: utf-8.
+  # utf-8: invalid bytes fail the run.
+  # utf-8-lossy: invalid bytes are replaced with U+FFFD.
+  encoding: utf-8
+
+# One entry per CSV column to keep, in output order. At least one.
+# Each column takes:
+#   source:   CSV header, exactly as written in the file. Required, free
+#             text, each header mapped at most once.
+#   name:     target column name, unique. Required.
+#   type:     string | int | float | bool | date | datetime. Required.
+#   nullable: false rejects rows where the value is empty. Default: true.
+#   format:   parse pattern, required on date and datetime columns and
+#             not allowed on other types (e.g. "%Y-%m-%d").
+#   min, max: inclusive bounds on int and float columns, not allowed on
+#             other types; rows outside the range are rejected. Optional,
+#             finite numbers, min not above max.
+# Rejected rows are counted and logged, never silently dropped.
+columns:
+  - source: "Date"
+    name: observation_date
+    type: date
+    format: "%Y-%m-%d"
+    nullable: false
+
+  - source: "Observed At"
+    name: observed_at
+    type: datetime
+    format: "%Y-%m-%d %H:%M:%S"
+
+  - source: "Station"
+    name: station_id
+    type: string
+    nullable: false
+
+  - source: "Temp (C)"
+    name: temperature_c
+    type: float
+    min: -90
+    max: 60
+
+  - source: "Humidity (%)"
+    name: humidity_pct
+    type: int
+    min: 0
+    max: 100
+
+  - source: "Raining"
+    name: is_raining
+    type: bool
+
+# Dataset-wide cleaning rules. Optional.
+rules:
+  # Columns that identify a row; only the first of each set of duplicates
+  # is kept, the others are rejected. Must name existing columns, without
+  # repeats. Default: [] (no deduplication).
+  deduplicate_on: [observation_date, station_id]
+
+  # true: CSV columns not listed in `columns` are dropped.
+  # false: any CSV column not listed in `columns` fails the run.
+  # Default: true.
+  drop_unmapped_columns: true
+
+# BigQuery destination. Required.
+target:
+  # Table name inside the BQ_DATASET dataset. Required.
+  table: city_weather
+
+  # Partition column: an existing date or datetime column. Optional.
+  partition_by: observation_date
+
+  # Clustering columns: up to 4 existing columns, without repeats, not of
+  # type float (BigQuery cannot cluster on it). Default: [].
+  cluster_by: [station_id]
+
+  # truncate: every run replaces the existing data, so re-running the same
+  # input leaves the same table state. Only allowed value. Default:
+  # truncate.
+  write_mode: truncate

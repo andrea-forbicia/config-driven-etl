@@ -278,7 +278,7 @@ Goal: any YAML file can be validated without touching data.
       columns; partition column is `date` / `datetime`; `min` / `max` only on
       numeric types; `format` only on `date` / `datetime` `[feat]`
 - [x] YAML loader with clear errors (file, field path, reason) `[feat]`
-- [ ] `datasets/example.yaml` documenting every option `[docs]`
+- [x] `datasets/example.yaml` documenting every option `[docs]`
 - [ ] YAML files for the two real datasets `[feat]`
 - [ ] `validate` CLI command, non-zero exit on an invalid file `[feat]`
 
