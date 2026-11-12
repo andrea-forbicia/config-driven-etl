@@ -185,6 +185,11 @@ and this project adheres to
   enforces the coverage threshold on unit and system tests together, and
   builds the Docker image, checked by validating the dataset files inside
   it. The workflow can be called by other workflows.
+- CI runs the `gcp` tests on pushes to `main`, authenticated to Google
+  Cloud through Workload Identity Federation with no stored key. The job
+  is skipped with a notice while the GCP repository secrets are missing,
+  and fails, rather than skipping the tests, when credentials cannot be
+  obtained.
 
 ### Fixed
 
