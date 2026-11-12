@@ -38,5 +38,8 @@ and this project adheres to
   errors include the line number.
 - `datasets/example.yaml`, a fictional dataset documenting every config
   option, its allowed values and default.
+- Dataset configs for USGS earthquakes of the past 30 days
+  (`usgs_earthquakes`, partitioned by event time) and the Washington State
+  electric vehicle population (`wa_ev_population`, not partitioned).
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
