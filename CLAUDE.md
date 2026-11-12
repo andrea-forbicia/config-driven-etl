@@ -24,7 +24,7 @@ The author is building this to learn. Unless explicitly asked to implement:
 - When asked to implement, do one checkbox at a time and stop for review.
 - Point out design trade-offs instead of silently choosing one.
 - Tick a checkbox as soon as its goal is complete (merged, or verified for a
-  manual step), in the next pull request.
+  manual step), in the pull request that completes it.
 
 ## Hard constraints
 
@@ -273,11 +273,11 @@ Goal: any YAML file can be validated without touching data.
 
 - [x] Pydantic models (`Source`, `Column`, `Rules`, `Target`,
       `DatasetConfig`) with a closed column type enum `[feat]`
-- [ ] Cross-field validation: exactly one of `url` / `path`; unique target
+- [x] Cross-field validation: exactly one of `url` / `path`; unique target
       names; `partition_by`, `cluster_by`, `deduplicate_on` reference existing
       columns; partition column is `date` / `datetime`; `min` / `max` only on
       numeric types; `format` only on `date` / `datetime` `[feat]`
-- [ ] YAML loader with clear errors (file, field path, reason) `[feat]`
+- [x] YAML loader with clear errors (file, field path, reason) `[feat]`
 - [ ] `datasets/example.yaml` documenting every option `[docs]`
 - [ ] YAML files for the two real datasets `[feat]`
 - [ ] `validate` CLI command, non-zero exit on an invalid file `[feat]`

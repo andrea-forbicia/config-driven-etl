@@ -31,5 +31,10 @@ and this project adheres to
   repeats; the partition column must be `date` or `datetime`; `cluster_by`
   rejects `float` columns, which BigQuery cannot cluster on. Every problem
   in a file is reported in one error.
+- `load_dataset_config` reads a dataset YAML file and raises
+  `DatasetConfigError` listing every problem as `file: field: reason`, with
+  field paths such as `columns[2].type`. Unreadable files, invalid YAML,
+  empty files, non-mapping documents and repeated keys are rejected; YAML
+  errors include the line number.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
