@@ -259,7 +259,7 @@ Goal: an empty but installable, linted, and tested project on a protected
 - [x] Scaffold `src/` and `tests/` with empty modules, `__version__`, and a
       working `python -m config_driven_etl --help` `[chore]`
 - [x] Minimal `ci.yml`: ruff check, ruff format check, unit tests `[ci]`
-- [ ] `CHANGELOG.md` with an `Unreleased` section `[docs]`
+- [x] `CHANGELOG.md` with an `Unreleased` section `[docs]`
 - [ ] `.env.example` and `settings.py` `[feat]`
 - [ ] GCP project and BigQuery sandbox dataset; local auth verified with
       application default credentials *(manual)*
