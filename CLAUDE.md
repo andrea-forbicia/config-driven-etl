@@ -338,7 +338,7 @@ Exit: both fixture datasets produce Parquet whose schema matches the config.
 
 Goal: idempotent loads into the BigQuery sandbox.
 
-- [ ] `bq_schema.py`: column type to BigQuery type, `nullable` to mode
+- [x] `bq_schema.py`: column type to BigQuery type, `nullable` to mode
       `[feat]`
 - [ ] Create the table if missing, with partitioning and clustering from the
       config `[feat]`

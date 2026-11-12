@@ -117,5 +117,9 @@ and this project adheres to
   config order, with the dtype of each column type (`output_schema`).
   Mismatches and unreadable files raise `LoadError` listing every
   problem.
+- `bigquery_schema` derives the BigQuery schema from the config, one field
+  per column in config order: `string` STRING, `int` INT64, `float`
+  FLOAT64, `bool` BOOL, `date` DATE, `datetime` DATETIME; `nullable:
+  false` columns are REQUIRED, the others NULLABLE.
 
 [Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/commits/main
