@@ -228,7 +228,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 0 — Setup**
+**Current phase: 1 — Dataset config**
 
 How to use this plan:
 
@@ -261,7 +261,7 @@ Goal: an empty but installable, linted, and tested project on a protected
 - [x] Minimal `ci.yml`: ruff check, ruff format check, unit tests `[ci]`
 - [x] `CHANGELOG.md` with an `Unreleased` section `[docs]`
 - [x] `.env.example` and `settings.py` `[feat]`
-- [ ] GCP project and BigQuery sandbox dataset; local auth verified with
+- [x] GCP project and BigQuery sandbox dataset; local auth verified with
       application default credentials *(manual)*
 
 Exit: `pip install -e ".[dev]"`, ruff, and pytest pass locally and in CI on a
