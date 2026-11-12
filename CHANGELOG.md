@@ -170,6 +170,9 @@ and this project adheres to
   the Parquet schema, row count and values, the loaded data, the
   partitioning and clustering sent to BigQuery, one log line per stage,
   and that a second run leaves the same state.
+- Coverage threshold: `pytest --cov=config_driven_etl` fails below 85% of
+  `src/` (currently about 99%), and `python -m config_driven_etl` is
+  covered by a test.
 
 ### Fixed
 

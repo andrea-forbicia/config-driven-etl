@@ -65,6 +65,11 @@ markers = [
 source = ["config_driven_etl"]
 branch = true
 
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_covered = true
+
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.12"

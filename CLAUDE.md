@@ -362,7 +362,7 @@ Goal: a CLI and container that behave like a product.
       duration `[feat]`
 - [x] Distinct exit codes per error category, documented in `--help` `[feat]`
 - [x] System tests on both fixture datasets, BigQuery faked `[test]`
-- [ ] Coverage at or above 85% on `src/` `[test]`
+- [x] Coverage at or above 85% on `src/` `[test]`
 - [ ] Dockerfile: slim image, non-root user, dataset file as argument,
       credentials mounted at runtime, never baked in `[build]`
 
