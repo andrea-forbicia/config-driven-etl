@@ -11,6 +11,7 @@ from config_driven_etl.transform import (
     TransformError,
     cast_columns,
     check_nullable,
+    check_range,
     select_columns,
 )
 
@@ -21,13 +22,16 @@ def typed_config(
     types: dict[str, str],
     formats: dict[str, str] | None = None,
     required: Iterable[str] = (),
+    bounds: dict[str, dict[str, float]] | None = None,
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
-    Columns in required are not nullable.
+    Columns in required are not nullable; bounds maps a column to its
+    min and max keys.
     """
     formats = formats or {}
+    bounds = bounds or {}
     columns = []
     for name, type_ in types.items():
         column: dict[str, Any] = {
@@ -35,6 +39,7 @@ def typed_config(
             "name": name,
             "type": type_,
             "nullable": name not in required,
+            **bounds.get(name, {}),
         }
         if type_ in TEMPORAL_FORMATS:
             column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
@@ -510,6 +515,114 @@ class CheckNullableTest(unittest.TestCase):
         result = check_nullable(raw_frame({"s": ["x"]}), config)
 
         self.assertIsInstance(result, pl.LazyFrame)
+
+
+def cast_and_check_range(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    bounds: dict[str, dict[str, float]],
+) -> pl.DataFrame:
+    config = typed_config(types, bounds=bounds)
+    return check_range(cast_columns(raw_frame(data), config), config).collect()
+
+
+class CheckRangeTest(unittest.TestCase):
+    def test_bounds_are_inclusive(self) -> None:
+        for type_ in ("int", "float"):
+            with self.subTest(type=type_):
+                result = cast_and_check_range(
+                    {"x": type_},
+                    {"x": ["-5", "0", "10"]},
+                    {"x": {"min": -5, "max": 10}},
+                )
+
+                self.assertEqual(result[REJECTIONS].to_list(), [[]] * 3)
+
+    def test_rejects_values_outside_the_bounds(self) -> None:
+        result = cast_and_check_range(
+            {"f": "float"},
+            {"f": ["-5.01", "10.01", "1e9"]},
+            {"f": {"min": -5, "max": 10}},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(),
+            [["f: below min"], ["f: above max"], ["f: above max"]],
+        )
+
+    def test_only_min_or_only_max(self) -> None:
+        result = cast_and_check_range(
+            {"lo": "int", "hi": "int"},
+            {"lo": ["-1", "1000"], "hi": ["-1000", "1"]},
+            {"lo": {"min": 0}, "hi": {"max": 0}},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(),
+            [["lo: below min"], ["hi: above max"]],
+        )
+
+    def test_fractional_bounds_on_int_columns(self) -> None:
+        result = cast_and_check_range(
+            {"i": "int"},
+            {"i": ["0", "1", "2"]},
+            {"i": {"min": 0.5, "max": 1.5}},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(),
+            [["i: below min"], [], ["i: above max"]],
+        )
+
+    def test_nulls_and_invalid_values_are_not_compared(self) -> None:
+        result = cast_and_check_range(
+            {"i": "int"}, {"i": [None, "", "abc"]}, {"i": {"min": 0}}
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [[], [], ["i: invalid int"]]
+        )
+
+    def test_one_reason_per_column_out_of_range(self) -> None:
+        result = cast_and_check_range(
+            {"a": "int", "b": "float"},
+            {"a": ["-1"], "b": ["99"]},
+            {"a": {"min": 0}, "b": {"max": 1}},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [["a: below min", "b: above max"]]
+        )
+
+    def test_columns_without_bounds_are_ignored(self) -> None:
+        result = cast_and_check_range(
+            {"i": "int", "s": "string"},
+            {"i": ["-999999"], "s": ["x"]},
+            {},
+        )
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[]])
+
+    def test_does_not_change_values(self) -> None:
+        result = cast_and_check_range(
+            {"i": "int"}, {"i": ["-1", "5"]}, {"i": {"min": 0}}
+        )
+
+        self.assertEqual(result["i"].to_list(), [-1, 5])
+
+    def test_empty_input(self) -> None:
+        result = cast_and_check_range(
+            {"i": "int"}, {"i": []}, {"i": {"min": 0}}
+        )
+
+        self.assertEqual(result.height, 0)
+        self.assertEqual(result.schema[REJECTIONS], pl.List(pl.String))
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"i": "int"}, bounds={"i": {"min": 0}})
+        lf = cast_columns(raw_frame({"i": ["1"]}), config)
+
+        self.assertIsInstance(check_range(lf, config), pl.LazyFrame)
 
 
 if __name__ == "__main__":
