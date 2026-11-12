@@ -2,11 +2,15 @@
 
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import polars as pl
+from google.api_core.exceptions import GoogleAPIError, NotFound
+from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import bigquery_schema
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.transform import output_schema
 
@@ -50,20 +54,10 @@ def verify_parquet(
 ) -> None:
     """Re-read a written Parquet file and check its schema and row count.
 
-    The mapped columns must come first, in config order, with the dtypes
-    of output_schema. Any further column must be an unmapped String
-    column, allowed only when rules.drop_unmapped_columns is false.
-    Raises LoadError listing every mismatch.
+    The columns must be exactly those of output_schema, in config order
+    and with its dtypes. Raises LoadError listing every mismatch.
     """
-    try:
-        # Both read only the file footer, not the data.
-        actual = pl.read_parquet_schema(path)
-        rows = pl.scan_parquet(path).select(pl.len()).collect().item()
-    except (OSError, pl.exceptions.PolarsError) as error:
-        lines = str(error).splitlines()
-        reason = lines[0] if lines and lines[0] else type(error).__name__
-        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
-
+    actual, rows = _read_footer(path)
     problems = _schema_problems(config, actual)
     if rows != expected_rows:
         problems.append(f"{rows} rows written, expected {expected_rows}")
@@ -71,6 +65,49 @@ def verify_parquet(
         raise LoadError(
             "\n".join(f"{path}: {problem}" for problem in problems)
         )
+
+
+def parquet_row_count(path: Path) -> int:
+    """Return the number of rows in a Parquet file, from its footer."""
+    return _read_footer(path)[1]
+
+
+def verify_table_rows(
+    client: bigquery.Client, table_id: str, expected_rows: int
+) -> None:
+    """Check that a table holds exactly expected_rows rows.
+
+    After a WRITE_TRUNCATE load the table holds only the loaded file, so
+    its row count must equal the file's. Raises LoadError otherwise.
+    """
+    with _bigquery_errors(table_id):
+        table = client.get_table(table_id)
+    if table.num_rows == expected_rows:
+        return
+    message = (
+        f"{table_id}: {table.num_rows} rows loaded, expected {expected_rows}"
+    )
+    # BigQuery drops rows whose partition is already past its expiration
+    # without failing the job; the sandbox expires partitions after 60
+    # days, so old data silently disappears.
+    if table.time_partitioning is not None:
+        message += (
+            "; rows in partitions older than the partition expiration are "
+            "dropped (60 days in the BigQuery sandbox)"
+        )
+    raise LoadError(message)
+
+
+def _read_footer(path: Path) -> tuple[dict[str, pl.DataType], int]:
+    try:
+        # Both read only the file footer, not the data.
+        schema = pl.read_parquet_schema(path)
+        rows = pl.scan_parquet(path).select(pl.len()).collect().item()
+    except (OSError, pl.exceptions.PolarsError) as error:
+        lines = str(error).splitlines()
+        reason = lines[0] if lines and lines[0] else type(error).__name__
+        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
+    return schema, rows
 
 
 def _schema_problems(
@@ -85,18 +122,144 @@ def _schema_problems(
             problems.append(
                 f"column '{name}' is {actual[name]}, expected {dtype}"
             )
-    names = list(actual)
-    # Only meaningful once every mapped column is there.
-    complete = all(name in actual for name in expected)
-    if complete and names[: len(expected)] != list(expected):
-        problems.append("mapped columns must come first, in config order")
-    for name, dtype in actual.items():
-        if name in expected:
-            continue
-        if config.rules.drop_unmapped_columns:
-            problems.append(f"unexpected column '{name}'")
-        elif dtype != pl.String:
-            problems.append(
-                f"unmapped column '{name}' is {dtype}, expected String"
-            )
+    problems += [
+        f"unexpected column '{name}'"
+        for name in actual
+        if name not in expected
+    ]
+    # Only meaningful when the same columns are there.
+    if not problems and list(actual) != list(expected):
+        problems.append("columns are not in config order")
     return problems
+
+
+def bigquery_table_id(project: str, dataset: str, table: str) -> str:
+    """Return the fully qualified id of a BigQuery table."""
+    return f"{project}.{dataset}.{table}"
+
+
+def ensure_table(
+    client: bigquery.Client, table_id: str, config: DatasetConfig
+) -> None:
+    """Create the target table if it does not exist yet.
+
+    A new table gets the config's schema, day partitioning on
+    target.partition_by and clustering on target.cluster_by. An existing
+    table keeps its schema, which each load replaces, but BigQuery cannot
+    change its partitioning or clustering, so a mismatch raises LoadError.
+    """
+    with _bigquery_errors(table_id):
+        try:
+            existing = client.get_table(table_id)
+        except NotFound:
+            table = bigquery.Table(table_id, schema=bigquery_schema(config))
+            table.time_partitioning = _time_partitioning(config)
+            table.clustering_fields = list(config.target.cluster_by) or None
+            # Another run may create it between the two calls.
+            client.create_table(table, exists_ok=True)
+            return
+
+    problems = _layout_problems(existing, config)
+    if problems:
+        raise LoadError(
+            "\n".join(f"{table_id}: {problem}" for problem in problems)
+            + f"\n{table_id}: delete the table to recreate it"
+        )
+
+
+def load_parquet(
+    client: bigquery.Client,
+    path: Path,
+    table_id: str,
+    config: DatasetConfig,
+) -> None:
+    """Replace the table's data with a Parquet file and wait for the job.
+
+    The load job uses the schema from the config, never autodetection,
+    and WRITE_TRUNCATE, so re-running the same file leaves the same table
+    state. Partitioning and clustering are repeated on the job because
+    BigQuery checks them against the table. Raises LoadError if the file
+    cannot be read or the job fails.
+    """
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.PARQUET,
+        schema=bigquery_schema(config),
+        autodetect=False,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        time_partitioning=_time_partitioning(config),
+        clustering_fields=list(config.target.cluster_by) or None,
+    )
+    try:
+        file = path.open("rb")
+    except OSError as error:
+        reason = error.strerror or str(error)
+        raise LoadError(f"{path}: cannot read file: {reason}") from error
+    with file, _bigquery_errors(table_id):
+        job = client.load_table_from_file(
+            file, table_id, job_config=job_config
+        )
+        job.result()
+
+
+def _time_partitioning(
+    config: DatasetConfig,
+) -> bigquery.TimePartitioning | None:
+    field = config.target.partition_by
+    if field is None:
+        return None
+    return bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.DAY, field=field
+    )
+
+
+def _layout_problems(
+    table: bigquery.Table, config: DatasetConfig
+) -> list[str]:
+    problems = []
+    partitioning = table.time_partitioning
+    if table.range_partitioning is not None:
+        actual = "integer range"
+    elif partitioning is None:
+        actual = None
+    else:
+        # Without a field the table is partitioned by ingestion time.
+        actual = partitioning.field or "_PARTITIONTIME"
+        if partitioning.type_ != bigquery.TimePartitioningType.DAY:
+            actual = f"{actual} ({partitioning.type_})"
+    expected = config.target.partition_by
+    if actual != expected:
+        problems.append(
+            f"partitioned by {actual or 'nothing'}, "
+            f"config says {expected or 'nothing'}"
+        )
+    clustering = list(table.clustering_fields or [])
+    if clustering != list(config.target.cluster_by):
+        problems.append(
+            f"clustered by {clustering or 'nothing'}, "
+            f"config says {list(config.target.cluster_by) or 'nothing'}"
+        )
+    return problems
+
+
+@contextmanager
+def _bigquery_errors(table_id: str) -> Generator[None]:
+    """Turn Google API errors into LoadError with a clear message."""
+    try:
+        yield
+    except GoogleAPIError as error:
+        reason = str(error).splitlines()[0] if str(error) else ""
+        lines = [f"BigQuery error: {reason or type(error).__name__}"]
+        # A failed load job puts the actual causes, such as the bad column,
+        # in errors rather than in the message.
+        details = getattr(error, "errors", None) or []
+        lines += [
+            f"  {detail['message']}"
+            for detail in details[:_MAX_ERROR_DETAILS]
+            if isinstance(detail, dict) and detail.get("message")
+        ]
+        raise LoadError(
+            "\n".join(f"{table_id}: {line}" for line in lines)
+        ) from error
+
+
+_MAX_ERROR_DETAILS = 3

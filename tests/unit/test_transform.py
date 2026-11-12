@@ -106,13 +106,43 @@ class SelectColumnsTest(unittest.TestCase):
 
         self.assertEqual(result.columns, ["first"])
 
-    def test_keeps_unmapped_columns_after_mapped_ones(self) -> None:
+    def test_fails_on_unmapped_columns_when_not_dropped(self) -> None:
         config = make_config([("First", "first")], drop_unmapped_columns=False)
+
+        with self.assertRaises(TransformError) as context:
+            select_columns(self.lf, config)
+
+        self.assertEqual(
+            str(context.exception),
+            "unmapped source column: 'Extra', 'Second'",
+        )
+
+    def test_every_column_mapped_passes_when_not_dropped(self) -> None:
+        config = make_config(
+            [("First", "first"), ("Second", "second"), ("Extra", "extra")],
+            drop_unmapped_columns=False,
+        )
 
         result = select_columns(self.lf, config).collect()
 
-        self.assertEqual(result.columns, ["first", "Extra", "Second"])
-        self.assertEqual(result["Extra"].to_list(), ["x1", "x2"])
+        self.assertEqual(result.columns, ["first", "second", "extra"])
+
+    def test_reports_missing_and_unmapped_columns_together(self) -> None:
+        config = make_config(
+            [("First", "first"), ("Gone", "gone")],
+            drop_unmapped_columns=False,
+        )
+
+        with self.assertRaises(TransformError) as context:
+            select_columns(self.lf, config)
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                "missing source column: 'Gone'",
+                "unmapped source column: 'Extra', 'Second'",
+            ],
+        )
 
     def test_keeps_values_as_strings(self) -> None:
         config = make_config([("First", "first")])
@@ -138,15 +168,6 @@ class SelectColumnsTest(unittest.TestCase):
 
         with self.assertRaises(TransformError):
             select_columns(self.lf, config)
-
-    def test_fails_when_kept_column_clashes_with_target_name(self) -> None:
-        lf = raw_frame({"First": ["a1"], "first": ["dup"]})
-        config = make_config([("First", "first")], drop_unmapped_columns=False)
-
-        with self.assertRaises(TransformError) as context:
-            select_columns(lf, config)
-
-        self.assertIn("'first'", str(context.exception))
 
     def test_dropped_column_may_share_a_target_name(self) -> None:
         lf = raw_frame({"First": ["a1"], "first": ["dup"]})
