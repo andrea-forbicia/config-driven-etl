@@ -181,6 +181,20 @@ and this project adheres to
   at run time, never baked in. `.dockerignore` is an allowlist, so only
   the package sources, dataset files and metadata reach the build
   context.
+- CI also validates every file in `datasets/`, runs the system tests,
+  enforces the coverage threshold on unit and system tests together, and
+  builds the Docker image, checked by validating the dataset files inside
+  it. The workflow can be called by other workflows.
+- CI runs the `gcp` tests on pushes to `main`, authenticated to Google
+  Cloud through Workload Identity Federation with no stored key. The job
+  is skipped with a notice while the GCP repository secrets are missing,
+  and fails, rather than skipping the tests, when credentials cannot be
+  obtained.
+- Release workflow on `v*` tags: runs CI, checks that the tag is an
+  annotated tag on `main` matching the version in `pyproject.toml`,
+  builds the Docker image and checks the version it reports, then creates
+  a GitHub Release. `vX.Y.Z` takes its notes from the `[X.Y.Z]` changelog
+  section; `vX.Y.Z-<suffix>` creates a pre-release from `[Unreleased]`.
 
 ### Fixed
 
