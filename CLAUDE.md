@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: done — `v1.0.0` released**
+**Current phase: done — `v1.1.0` released**
 
 How to use this plan:
 
