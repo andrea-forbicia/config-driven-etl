@@ -8,20 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Changed
-
-- The real dataset configs use the new rules:
-  - `nyc_squirrel_census`: `above_ground_measurement` is now an `int`
-    (`"FALSE"`, meaning on the ground, is read as null), `age` reads `"?"`
-    as null, and IDs, hectares, shift, age, fur color and location are
-    checked with `pattern` or `allowed_values`.
-  - `wa_ev_population`: `electric_range` reads `0` ("range not
-    researched") as null; VIN, state, postal code and census tract are
-    checked with `pattern`, and vehicle type and CAFV eligibility with
-    `allowed_values`. Postal codes that lost their leading zero upstream
-    are now rejected.
-  - `usgs_earthquakes`: network and event IDs are checked with `pattern`;
-    no closed value sets, since the feed can add new values at any time.
+## [1.2.0] - 2026-11-18
 
 ### Added
 
@@ -43,6 +30,21 @@ and this project adheres to
   compiles the pattern with the Polars (Rust) regex engine, so
   look-around and backreferences are rejected before any data is read,
   and rejects `allowed_values` entries that do not match it.
+
+### Changed
+
+- The real dataset configs use the new rules:
+  - `nyc_squirrel_census`: `above_ground_measurement` is now an `int`
+    (`"FALSE"`, meaning on the ground, is read as null), `age` reads `"?"`
+    as null, and IDs, hectares, shift, age, fur color and location are
+    checked with `pattern` or `allowed_values`.
+  - `wa_ev_population`: `electric_range` reads `0` ("range not
+    researched") as null; VIN, state, postal code and census tract are
+    checked with `pattern`, and vehicle type and CAFV eligibility with
+    `allowed_values`. Postal codes that lost their leading zero upstream
+    are now rejected.
+  - `usgs_earthquakes`: network and event IDs are checked with `pattern`;
+    no closed value sets, since the feed can add new values at any time.
 
 ## [1.1.0] - 2026-11-18
 
@@ -250,6 +252,7 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/andrea-forbicia/config-driven-etl/releases/tag/v1.0.0
