@@ -198,7 +198,7 @@ than one check.
       `[tool.pyright]` settings. Decide first between adding a pinned
       `pyright` to the `dev` extras (a new dependency) and a pinned GitHub
       Action `[ci]`
-- [ ] State each fixture's expected outcome (rows in, valid, rejected,
+- [x] State each fixture's expected outcome (rows in, valid, rejected,
       rejections by reason) once, and read it in the extract, pipeline,
       CLI, load and system tests instead of repeating the numbers `[test]`
 - [ ] Decide whether a value outside `min` / `max` or `pattern` that is

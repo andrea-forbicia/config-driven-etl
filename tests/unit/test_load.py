@@ -14,7 +14,6 @@ from google.cloud import bigquery
 
 from config_driven_etl.dataset_config import (
     DatasetConfig,
-    load_dataset_config,
 )
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
@@ -29,8 +28,7 @@ from config_driven_etl.load import (
     write_parquet,
 )
 from config_driven_etl.transform import transform
-
-FIXTURES = Path(__file__).parents[1] / "fixtures"
+from fixture_outcomes import OUTCOMES, fixture_config
 
 
 def typed_frame() -> pl.LazyFrame:
@@ -260,9 +258,9 @@ class FixtureParquetTest(unittest.TestCase):
     """Exit criterion: each fixture writes Parquet matching its config."""
 
     def test_fixtures_write_verified_parquet(self) -> None:
-        for name, rows in (("sensor_readings", 5), ("library_loans", 4)):
+        for name, outcome in OUTCOMES.items():
             with self.subTest(dataset=name):
-                config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
+                config = fixture_config(name)
                 source = config.source
                 assert source.path is not None
                 lf = scan_raw_csv(source.path, source)
@@ -273,7 +271,7 @@ class FixtureParquetTest(unittest.TestCase):
                     write_parquet(valid.lazy(), path)
 
                     verify_parquet(path, config, valid.height)
-                    self.assertEqual(valid.height, rows)
+                    self.assertEqual(valid.height, outcome.rows_valid)
 
 
 TABLE_ID = "project.dataset.sample"

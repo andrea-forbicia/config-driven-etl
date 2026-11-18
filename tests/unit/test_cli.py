@@ -14,6 +14,7 @@ from typer.testing import CliRunner, Result
 
 from config_driven_etl import __version__
 from config_driven_etl.cli import ExitCode, app
+from fixture_outcomes import FIXTURES, OUTCOMES, fixture_path
 
 # Rich forces colors on CI runners, splitting option names with ANSI codes.
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
@@ -37,7 +38,7 @@ class CliTest(unittest.TestCase):
 
 
 DATASETS_DIR = Path(__file__).parents[2] / "datasets"
-INVALID_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "invalid"
+INVALID_FIXTURES_DIR = FIXTURES / "invalid"
 
 # Every invalid fixture with the problem `validate` must report for it.
 INVALID_FIXTURES = {
@@ -169,12 +170,17 @@ class ValidateCommandTest(unittest.TestCase):
                 (line,) = result.stderr.splitlines()
                 self.assertTrue(line.startswith(f"{path}: {problem}"))
 
+    def test_every_fixture_dataset_has_an_outcome(self) -> None:
+        datasets = {
+            path.name
+            for path in FIXTURES.iterdir()
+            if path.is_dir() and path.name != "invalid"
+        }
+
+        self.assertEqual(datasets, set(OUTCOMES))
+
     def test_fixture_datasets_are_valid(self) -> None:
-        fixtures = Path(__file__).parents[1] / "fixtures"
-        paths = [
-            str(fixtures / "sensor_readings"),
-            str(fixtures / "library_loans"),
-        ]
+        paths = [str(FIXTURES / name) for name in OUTCOMES]
 
         result = self.runner.invoke(app, ["validate", *paths])
 
@@ -191,8 +197,8 @@ class ValidateCommandTest(unittest.TestCase):
         )
 
 
-FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
-LIBRARY = str(FIXTURES_DIR / "library_loans" / "library_loans.yaml")
+LIBRARY = str(fixture_path("library_loans"))
+LOANS = OUTCOMES["library_loans"]
 # Distinctive values, so a leak into the logs is easy to spot.
 PROJECT = "secret-project-4f1c"
 BQ_DATASET = "secret_dataset_4f1c"
@@ -224,7 +230,7 @@ class PipelineCommandsTest(unittest.TestCase):
         self.client.project = PROJECT
         self.client.__enter__.return_value = self.client
         table = mock.create_autospec(bigquery.Table, instance=True)
-        table.num_rows = 4
+        table.num_rows = LOANS.rows_valid
         table.time_partitioning = None
         self.client.get_table.side_effect = [NotFound("no table"), table]
         factory = mock.patch(
@@ -278,15 +284,36 @@ class PipelineCommandsTest(unittest.TestCase):
                 for event in events
             ],
             [
-                ("stage_completed", "extract", "library_loans", None, 13, 0),
-                ("stage_completed", "transform", "library_loans", 13, 4, 9),
-                ("stage_completed", "load", "library_loans", 4, 4, 0),
+                (
+                    "stage_completed",
+                    "extract",
+                    "library_loans",
+                    None,
+                    LOANS.rows_in,
+                    0,
+                ),
+                (
+                    "stage_completed",
+                    "transform",
+                    "library_loans",
+                    LOANS.rows_in,
+                    LOANS.rows_valid,
+                    LOANS.rows_rejected,
+                ),
+                (
+                    "stage_completed",
+                    "load",
+                    "library_loans",
+                    LOANS.rows_valid,
+                    LOANS.rows_valid,
+                    0,
+                ),
             ],
         )
         for event in events:
             self.assertEqual(event["level"], "info")
             self.assertGreaterEqual(event["duration_s"], 0)
-        self.assertEqual(sum(events[1]["rejections"].values()), 9)
+        self.assertEqual(events[1]["rejections"], LOANS.rejections)
         self.client.load_table_from_file.assert_called_once()
 
     def test_logs_never_contain_settings(self) -> None:

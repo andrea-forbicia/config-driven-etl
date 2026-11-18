@@ -83,7 +83,8 @@ config-driven-etl/
 │   ├── unit/                 # no I/O, no network
 │   ├── system/               # full pipeline on fixture datasets
 │   ├── gcp/                  # real BigQuery sandbox, marker gcp
-│   └── fixtures/             # small CSV files + matching YAML configs
+│   ├── fixtures/             # small CSV files + matching YAML configs
+│   └── fixture_outcomes.py   # expected rows and rejections per fixture
 ├── data/                     # raw/ and processed/, git-ignored
 ├── .env.example
 ├── .gitignore

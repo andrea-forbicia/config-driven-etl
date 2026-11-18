@@ -52,6 +52,8 @@ select = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Makes tests/fixture_outcomes.py importable from every test module.
+pythonpath = ["tests"]
 addopts = [
     "--import-mode=importlib",
     "--strict-markers",
@@ -74,4 +76,5 @@ skip_covered = true
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.12"
+extraPaths = ["tests"]
 typeCheckingMode = "standard"

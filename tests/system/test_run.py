@@ -16,10 +16,8 @@ from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
 from config_driven_etl.cli import app
-from config_driven_etl.dataset_config import load_dataset_config
 from config_driven_etl.transform import output_schema
-
-FIXTURES = Path(__file__).parents[1] / "fixtures"
+from fixture_outcomes import OUTCOMES, fixture_config, fixture_path
 
 
 class FakeBigQuery:
@@ -96,7 +94,7 @@ class RunCommandTest(unittest.TestCase):
         self.addCleanup(factory.stop)
 
     def run_dataset(self, name: str) -> Result:
-        dataset = FIXTURES / name / f"{name}.yaml"
+        dataset = fixture_path(name)
         result = CliRunner().invoke(app, ["run", str(dataset)])
         self.assertEqual(result.exit_code, 0, result.output)
         return result
@@ -108,18 +106,30 @@ class RunCommandTest(unittest.TestCase):
     def events(self, result: Result) -> list[dict[str, Any]]:
         return [json.loads(line) for line in result.stderr.splitlines()]
 
-    def assert_parquet_matches_config(self, name: str, rows: int) -> None:
-        config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
+    def assert_matches_outcome(self, name: str, result: Result) -> None:
+        """Parquet, loaded table and transform event match the fixture."""
+        config = fixture_config(name)
+        outcome = OUTCOMES[name]
         frame = self.parquet(name)
         self.assertEqual(frame.schema, output_schema(config))
-        self.assertEqual(frame.height, rows)
+        self.assertEqual(frame.height, outcome.rows_valid)
+        transform = self.events(result)[1]
+        self.assertEqual(
+            (
+                transform["rows_in"],
+                transform["rows_out"],
+                transform["rows_rejected"],
+            ),
+            (outcome.rows_in, outcome.rows_valid, outcome.rows_rejected),
+        )
+        self.assertEqual(transform["rejections"], outcome.rejections)
         loaded = self.bigquery.data[f"project.dataset.{config.target.table}"]
         self.assertTrue(loaded.equals(frame))
 
     def test_sensor_readings(self) -> None:
         result = self.run_dataset("sensor_readings")
 
-        self.assert_parquet_matches_config("sensor_readings", rows=5)
+        self.assert_matches_outcome("sensor_readings", result)
         self.assertEqual(
             self.parquet("sensor_readings").rows(),
             [
@@ -130,15 +140,6 @@ class RunCommandTest(unittest.TestCase):
                 ("r011", "s5", datetime(2026, 1, 2, 3), None, 61, True),
             ],
         )
-        transform = self.events(result)[1]
-        self.assertEqual(
-            (transform["rows_in"], transform["rows_out"]), (14, 5)
-        )
-        self.assertEqual(transform["rows_rejected"], 9)
-        self.assertEqual(
-            transform["rejections"]["reading_id: no pattern match"], 1
-        )
-        self.assertEqual(transform["rejections"]["sensor_id: null"], 2)
         (job_config,) = self.bigquery.job_configs
         partitioning = job_config.time_partitioning
         assert partitioning is not None
@@ -148,7 +149,7 @@ class RunCommandTest(unittest.TestCase):
     def test_library_loans(self) -> None:
         result = self.run_dataset("library_loans")
 
-        self.assert_parquet_matches_config("library_loans", rows=4)
+        self.assert_matches_outcome("library_loans", result)
         frame = self.parquet("library_loans")
         self.assertEqual(frame["loan_id"].to_list(), [1001, 1002, 1005, 1010])
         self.assertEqual(frame["branch_code"].to_list()[0], "007")
@@ -156,14 +157,6 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(frame["title"].to_list()[2], "Caf� society")
         self.assertIsNone(frame["title"].to_list()[3])
         self.assertEqual(frame["loan_date"].to_list()[0], date(2026, 2, 3))
-        transform = self.events(result)[1]
-        self.assertEqual(
-            (transform["rows_in"], transform["rows_out"]), (13, 4)
-        )
-        self.assertEqual(transform["rejections"]["loan_date: invalid date"], 2)
-        self.assertEqual(
-            transform["rejections"]["branch_code: not allowed"], 1
-        )
         (job_config,) = self.bigquery.job_configs
         self.assertIsNone(job_config.time_partitioning)
 

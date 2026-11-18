@@ -12,7 +12,7 @@ import pytest
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
-from config_driven_etl.dataset_config import DatasetConfig, load_dataset_config
+from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
     bigquery_table_id,
@@ -26,8 +26,7 @@ from config_driven_etl.load import (
 )
 from config_driven_etl.settings import Settings
 from config_driven_etl.transform import transform
-
-FIXTURES = Path(__file__).parents[1] / "fixtures"
+from fixture_outcomes import OUTCOMES, fixture_config
 
 
 def sandbox() -> tuple[bigquery.Client, str] | None:
@@ -79,7 +78,7 @@ class BigQueryLoadTest(unittest.TestCase):
 
     def write_fixture(self, name: str) -> tuple[Path, str]:
         """Transform a fixture into Parquet; return it and a new table id."""
-        config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
+        config = fixture_config(name)
         source = config.source
         assert source.path is not None
         valid = transform(scan_raw_csv(source.path, source), config)
@@ -94,9 +93,9 @@ class BigQueryLoadTest(unittest.TestCase):
         return path, table_id
 
     def test_fixtures_load_and_reload_to_the_same_state(self) -> None:
-        for name in ("sensor_readings", "library_loans"):
+        for name in OUTCOMES:
             with self.subTest(dataset=name):
-                config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
+                config = fixture_config(name)
                 path, table_id = self.write_fixture(name)
                 rows = parquet_row_count(path)
                 expected = pl.read_parquet(path)
