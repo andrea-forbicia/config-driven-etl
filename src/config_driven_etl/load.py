@@ -27,10 +27,10 @@ def processed_parquet_path(data_dir: Path, name: str) -> Path:
     return data_dir / "processed" / name / f"{name}.parquet"
 
 
-def write_parquet(lf: pl.LazyFrame, destination: Path) -> None:
-    """Write lf to destination as snappy Parquet, replacing any old file.
+def write_parquet(df: pl.DataFrame, destination: Path) -> None:
+    """Write df to destination as snappy Parquet, replacing any old file.
 
-    The frame is streamed to a temporary file in the same directory and
+    The frame is written to a temporary file in the same directory and
     renamed when complete, so a failed run never leaves a truncated file
     or removes the previous output. Raises LoadError if it cannot be
     written.
@@ -50,7 +50,9 @@ def write_parquet(lf: pl.LazyFrame, destination: Path) -> None:
         # Polars opens the path itself, and Windows cannot replace an
         # open file.
         os.close(handle)
-        lf.sink_parquet(temp, compression="snappy")
+        # A synchronous write: sink_parquet can still create the file
+        # from a background thread after raising, past the cleanup below.
+        df.write_parquet(temp, compression="snappy")
         temp.replace(destination)
     except (OSError, pl.exceptions.PolarsError) as error:
         raise _write_error(destination, error) from error

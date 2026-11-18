@@ -15,6 +15,10 @@ and this project adheres to
   `allowed_values`. Every allowed value passes those checks, so the
   second reason was always redundant; rejection counts now give each
   value one reason per column.
+- A failed Parquet write could leave its temporary `.part` file in the
+  processed directory: Polars' streaming writer could still create it
+  after raising. The already collected rows are now written
+  synchronously.
 
 ### Changed
 

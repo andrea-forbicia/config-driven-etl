@@ -205,7 +205,7 @@ than one check.
       also outside `allowed_values` gets both reasons or only the more
       specific one; implement, test and document the choice in
       `datasets/example.yaml` `[fix]` (or `[docs]` if both reasons stay)
-- [ ] Fix the flaky `test_failed_write_keeps_the_previous_output`: once in
+- [x] Fix the flaky `test_failed_write_keeps_the_previous_output`: once in
       CI a failed `write_parquet` left its `.part` file behind. Start from
       a test that reproduces it, then fix the cause `[fix]`
 - [ ] Release `v1.2.1` with the overlap rule and Parquet write fixes:
