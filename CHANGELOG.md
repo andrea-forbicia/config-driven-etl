@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `null_values` column option: sentinel strings (for example `"N/A"` or
+  `"-"`) read as null before the type is checked. Matching is exact and
+  case-sensitive on the trimmed value; other values are left as written.
+  A sentinel in a column with `nullable: false` is rejected as
+  `<name>: null`.
+
 ## [1.1.0] - 2026-11-18
 
 ### Added

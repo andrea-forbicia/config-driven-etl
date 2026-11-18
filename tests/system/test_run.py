@@ -119,7 +119,7 @@ class RunCommandTest(unittest.TestCase):
     def test_sensor_readings(self) -> None:
         result = self.run_dataset("sensor_readings")
 
-        self.assert_parquet_matches_config("sensor_readings", rows=4)
+        self.assert_parquet_matches_config("sensor_readings", rows=5)
         self.assertEqual(
             self.parquet("sensor_readings").rows(),
             [
@@ -127,13 +127,15 @@ class RunCommandTest(unittest.TestCase):
                 ("r002", "s1", datetime(2026, 1, 1, 1), 22.0, 41, False),
                 ("r003", "s2", datetime(2026, 1, 1, 0), None, 55, True),
                 ("r010", "s5", datetime(2026, 1, 2, 2), -50.0, 0, False),
+                ("r011", "s5", datetime(2026, 1, 2, 3), None, 61, True),
             ],
         )
         transform = self.events(result)[1]
         self.assertEqual(
-            (transform["rows_in"], transform["rows_out"]), (11, 4)
+            (transform["rows_in"], transform["rows_out"]), (13, 5)
         )
-        self.assertEqual(transform["rows_rejected"], 7)
+        self.assertEqual(transform["rows_rejected"], 8)
+        self.assertEqual(transform["rejections"]["sensor_id: null"], 2)
         (job_config,) = self.bigquery.job_configs
         partitioning = job_config.time_partitioning
         assert partitioning is not None

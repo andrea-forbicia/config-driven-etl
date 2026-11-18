@@ -260,7 +260,7 @@ class FixtureParquetTest(unittest.TestCase):
     """Exit criterion: each fixture writes Parquet matching its config."""
 
     def test_fixtures_write_verified_parquet(self) -> None:
-        for name in ("sensor_readings", "library_loans"):
+        for name, rows in (("sensor_readings", 5), ("library_loans", 4)):
             with self.subTest(dataset=name):
                 config = load_dataset_config(FIXTURES / name / f"{name}.yaml")
                 source = config.source
@@ -273,7 +273,7 @@ class FixtureParquetTest(unittest.TestCase):
                     write_parquet(valid.lazy(), path)
 
                     verify_parquet(path, config, valid.height)
-                    self.assertEqual(valid.height, 4)
+                    self.assertEqual(valid.height, rows)
 
 
 TABLE_ID = "project.dataset.sample"

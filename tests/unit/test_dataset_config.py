@@ -493,12 +493,87 @@ class ColumnTypeOptionsTest(unittest.TestCase):
                         "month and day",
                     )
 
-    def test_reports_every_problem(self) -> None:
-        message = self.column_error(
-            {"type": "string", "format": "%Y", "min": 2, "max": 1}
+    def test_null_values_default_to_empty(self) -> None:
+        column = Column.model_validate(
+            {"source": "x", "name": "x", "type": "int"}
         )
 
-        self.assertEqual(len(message.splitlines()), 3)
+        self.assertEqual(column.null_values, ())
+
+    def test_null_values_on_every_type(self) -> None:
+        for column_type in ColumnType:
+            with self.subTest(type=column_type):
+                format_ = {"format": "%Y-%m-%d"}
+                column = Column.model_validate(
+                    {
+                        "source": "x",
+                        "name": "x",
+                        "type": column_type,
+                        "null_values": ["N/A", "-"],
+                        **(format_ if column_type in TEMPORAL_TYPES else {}),
+                    }
+                )
+
+                self.assertEqual(column.null_values, ("N/A", "-"))
+
+    def test_empty_null_value_on_string_columns(self) -> None:
+        column = Column.model_validate(
+            {"source": "x", "name": "x", "type": "string", "null_values": [""]}
+        )
+
+        self.assertEqual(column.null_values, ("",))
+
+    def test_empty_null_value_on_other_columns(self) -> None:
+        self.assertEqual(
+            self.column_error({"type": "int", "null_values": ["", "-"]}),
+            "'null_values' may only contain '' on string columns, where "
+            "blank values are kept; other types already read them as null",
+        )
+
+    def test_null_value_with_surrounding_spaces(self) -> None:
+        for value in [" N/A", "N/A ", "\tN/A"]:
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.column_error(
+                        {"type": "string", "null_values": [value]}
+                    ),
+                    f"'null_values' entry {value!r} has leading or trailing "
+                    "whitespace and can never match a trimmed value",
+                )
+
+    def test_duplicate_null_values(self) -> None:
+        self.assertEqual(
+            self.column_error(
+                {"type": "int", "null_values": ["-", "N/A", "-", "N/A"]}
+            ),
+            "'null_values' entry '-' is listed more than once\n"
+            "'null_values' entry 'N/A' is listed more than once",
+        )
+
+    def test_null_values_are_case_sensitive(self) -> None:
+        column = Column.model_validate(
+            {
+                "source": "x",
+                "name": "x",
+                "type": "string",
+                "null_values": ["N/A", "n/a"],
+            }
+        )
+
+        self.assertEqual(column.null_values, ("N/A", "n/a"))
+
+    def test_reports_every_problem(self) -> None:
+        message = self.column_error(
+            {
+                "type": "string",
+                "format": "%Y",
+                "min": 2,
+                "max": 1,
+                "null_values": [" x"],
+            }
+        )
+
+        self.assertEqual(len(message.splitlines()), 4)
 
 
 class DatasetConfigReferencesTest(unittest.TestCase):
@@ -810,6 +885,23 @@ class LoadDatasetConfigTest(unittest.TestCase):
 
         self.assertEqual(len(problems), 1)
         self.assertTrue(problems[0].startswith("columns[1].type: "))
+
+    def test_unquoted_null_values_are_not_strings(self) -> None:
+        # YAML reads these as a number or null; coercing them back to
+        # text could silently differ from the CSV (-999 vs -999.0).
+        for entry in ["-999", "NULL", "~"]:
+            with self.subTest(entry=entry):
+                text = VALID_YAML.replace(
+                    "type: float", f"type: float\n    null_values: [{entry}]"
+                )
+
+                problems = self.load_problems(self.write(text))
+
+                self.assertEqual(len(problems), 1)
+                self.assertTrue(
+                    problems[0].startswith("columns[1].null_values[0]: "),
+                    problems[0],
+                )
 
     def test_column_errors_are_prefixed_with_column_path(self) -> None:
         text = VALID_YAML.replace('    format: "%Y-%m-%d"\n', "")

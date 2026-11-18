@@ -111,13 +111,13 @@ class TransformDatasetTest(PipelineTestCase):
 
         self.assertEqual(
             (result.rows_in, result.rows_out, result.rows_rejected),
-            (11, 4, 7),
+            (13, 5, 8),
         )
         assert result.rejections is not None
-        self.assertEqual(sum(result.rejections.values()), 7)
+        self.assertEqual(sum(result.rejections.values()), 8)
         self.assertEqual(result.rejections["reading_id: duplicate"], 1)
         path = processed_parquet_path(self.data_dir, config.name)
-        self.assertEqual(pl.read_parquet(path).height, 4)
+        self.assertEqual(pl.read_parquet(path).height, 5)
 
     def test_missing_raw_file_is_an_extract_error(self) -> None:
         with self.assertRaises(ExtractError):

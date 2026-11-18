@@ -23,8 +23,8 @@ flowchart LR
 - **extract**: downloads `source.url` (skipped when unchanged) or copies
   `source.path`, and reads every column as a string.
 - **transform**: pure functions on a Polars `LazyFrame`: rename and select
-  columns, cast types, then the `nullable`, `min` / `max` and
-  `deduplicate_on` rules. Rejected rows are counted per reason and logged.
+  columns, turn `null_values` sentinels into null, cast types, then the
+  `nullable`, `min` / `max` and `deduplicate_on` rules. Rejected rows are counted per reason and logged.
 - **load**: writes snappy Parquet, verifies it, then replaces the BigQuery
   table data with a load job (`WRITE_TRUNCATE`). The schema, partitioning
   and clustering come from the config; re-running gives the same table.

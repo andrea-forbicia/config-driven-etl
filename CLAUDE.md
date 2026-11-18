@@ -398,7 +398,7 @@ Goal: the most common dirty values in open data are handled from the config
 alone. Every rule is an optional per-column field, so each one is a MINOR
 change.
 
-- [ ] `null_values` per column: sentinel strings (`"N/A"`, `"-"`, `"NULL"`)
+- [x] `null_values` per column: sentinel strings (`"N/A"`, `"-"`, `"NULL"`)
       turned into null before the cast. Exact, case-sensitive match on the
       trimmed value. A sentinel in a column with `nullable: false` is
       rejected as `<name>: null` `[feat]`

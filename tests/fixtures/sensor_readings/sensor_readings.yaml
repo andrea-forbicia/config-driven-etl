@@ -13,7 +13,9 @@
 #   9  rejected    humidity_pct: 101 above max 100
 #  10  rejected    is_online: "maybe" is not a bool
 #  11  valid       -50 and 0 on the inclusive min bounds
-# Totals: 11 rows, 4 valid, 7 rejected.
+#  12  valid       " N/A " temperature_c is a null_values sentinel
+#  13  rejected    sensor_id: "-" sentinel in a non-nullable column
+# Totals: 13 rows, 5 valid, 8 rejected.
 name: sensor_readings
 source:
   path: sensor_readings.csv
@@ -26,6 +28,7 @@ columns:
     name: sensor_id
     type: string
     nullable: false
+    null_values: ["-"]
   - source: "Timestamp"
     name: measured_at
     type: datetime
@@ -36,6 +39,7 @@ columns:
     type: float
     min: -50
     max: 60
+    null_values: ["N/A"]
   - source: "Humidity"
     name: humidity_pct
     type: int

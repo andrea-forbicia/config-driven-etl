@@ -9,6 +9,7 @@ from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.transform import (
     REJECTIONS,
     TransformError,
+    apply_null_values,
     cast_columns,
     check_duplicates,
     check_nullable,
@@ -28,15 +29,18 @@ def typed_config(
     required: Iterable[str] = (),
     bounds: dict[str, dict[str, float]] | None = None,
     deduplicate_on: Iterable[str] = (),
+    null_values: dict[str, list[str]] | None = None,
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
     Columns in required are not nullable; bounds maps a column to its
-    min and max keys; deduplicate_on lists the key columns.
+    min and max keys; deduplicate_on lists the key columns; null_values
+    maps a column to its sentinel strings.
     """
     formats = formats or {}
     bounds = bounds or {}
+    null_values = null_values or {}
     columns = []
     for name, type_ in types.items():
         column: dict[str, Any] = {
@@ -45,6 +49,7 @@ def typed_config(
             "type": type_,
             "nullable": name not in required,
             **bounds.get(name, {}),
+            "null_values": null_values.get(name, []),
         }
         if type_ in TEMPORAL_FORMATS:
             column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
@@ -199,6 +204,99 @@ class SelectColumnsTest(unittest.TestCase):
         config = make_config([("First", "first")])
 
         result = select_columns(self.lf, config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
+
+
+ALL_TYPES = ("string", "int", "float", "bool", "date", "datetime")
+
+
+def nullify(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    null_values: dict[str, list[str]],
+) -> pl.DataFrame:
+    config = typed_config(types, null_values=null_values)
+    return apply_null_values(raw_frame(data), config).collect()
+
+
+class ApplyNullValuesTest(unittest.TestCase):
+    def test_turns_sentinels_into_null_on_every_type(self) -> None:
+        for type_ in ALL_TYPES:
+            with self.subTest(type=type_):
+                result = nullify(
+                    {"x": type_},
+                    {"x": ["N/A", "-", "keep"]},
+                    {"x": ["N/A", "-"]},
+                )
+
+                self.assertEqual(result["x"].to_list(), [None, None, "keep"])
+
+    def test_match_is_case_sensitive(self) -> None:
+        result = nullify(
+            {"s": "string"}, {"s": ["n/a", "N/A"]}, {"s": ["N/A"]}
+        )
+
+        self.assertEqual(result["s"].to_list(), ["n/a", None])
+
+    def test_match_is_on_the_trimmed_value(self) -> None:
+        result = nullify(
+            {"i": "int"}, {"i": [" N/A ", "\tN/A"]}, {"i": ["N/A"]}
+        )
+
+        self.assertEqual(result["i"].to_list(), [None, None])
+
+    def test_other_values_are_left_as_written(self) -> None:
+        result = nullify(
+            {"s": "string"}, {"s": ["  x  ", " N/Ax"]}, {"s": ["N/A"]}
+        )
+
+        self.assertEqual(result["s"].to_list(), ["  x  ", " N/Ax"])
+
+    def test_empty_sentinel_on_string_columns(self) -> None:
+        result = nullify({"s": "string"}, {"s": ["", "   ", "x"]}, {"s": [""]})
+
+        self.assertEqual(result["s"].to_list(), [None, None, "x"])
+
+    def test_columns_without_sentinels_are_unchanged(self) -> None:
+        result = nullify(
+            {"a": "string", "b": "string"},
+            {"a": ["N/A", None], "b": ["N/A", " "]},
+            {"a": ["N/A"]},
+        )
+
+        self.assertEqual(result["a"].to_list(), [None, None])
+        self.assertEqual(result["b"].to_list(), ["N/A", " "])
+
+    def test_adds_no_rejections(self) -> None:
+        result = nullify({"i": "int"}, {"i": ["N/A"]}, {"i": ["N/A"]})
+
+        self.assertNotIn(REJECTIONS, result.columns)
+
+    def test_sentinel_in_required_column_is_rejected_as_null(self) -> None:
+        for type_ in ALL_TYPES:
+            with self.subTest(type=type_):
+                config = typed_config(
+                    {"x": type_}, required=["x"], null_values={"x": ["N/A"]}
+                )
+                lf = apply_null_values(raw_frame({"x": ["N/A"]}), config)
+
+                result = check_nullable(cast_columns(lf, config), config)
+
+                self.assertEqual(
+                    result.collect()[REJECTIONS].to_list(), [["x: null"]]
+                )
+
+    def test_empty_input(self) -> None:
+        result = nullify({"i": "int"}, {"i": []}, {"i": ["N/A"]})
+
+        self.assertEqual(result.height, 0)
+        self.assertEqual(result.schema["i"], pl.String)
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"i": "int"}, null_values={"i": ["N/A"]})
+
+        result = apply_null_values(raw_frame({"i": ["N/A"]}), config)
 
         self.assertIsInstance(result, pl.LazyFrame)
 
@@ -942,6 +1040,39 @@ class TransformTest(unittest.TestCase):
         self.assertEqual(valid.columns, ["id", "day", "score"])
         self.assertEqual(
             (valid.height, rejected.height, counts.height), (0, 0, 0)
+        )
+
+    def test_sentinels_are_null_before_casting(self) -> None:
+        config = typed_config(
+            {"a": "int", "b": "date"},
+            required=["b"],
+            null_values={"a": ["N/A"], "b": ["0000-00-00"]},
+        )
+        raw = raw_frame(
+            {"a": ["N/A", "N/A"], "b": ["2026-01-01", "0000-00-00"]}
+        )
+
+        result = transform(raw, config)
+
+        self.assertEqual(
+            result.valid.collect().rows(), [(None, date(2026, 1, 1))]
+        )
+        self.assertEqual(
+            result.rejection_counts.collect().rows(), [("b: null", 1)]
+        )
+
+    def test_sentinels_are_null_before_the_range_check(self) -> None:
+        config = typed_config(
+            {"t": "float"},
+            bounds={"t": {"min": -90}},
+            null_values={"t": ["-999"]},
+        )
+
+        result = transform(raw_frame({"t": ["-999", "-100"]}), config)
+
+        self.assertEqual(result.valid.collect()["t"].to_list(), [None])
+        self.assertEqual(
+            result.rejection_counts.collect().rows(), [("t: below min", 1)]
         )
 
 
