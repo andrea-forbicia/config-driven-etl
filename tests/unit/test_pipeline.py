@@ -9,10 +9,7 @@ import requests
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 
-from config_driven_etl.dataset_config import (
-    DatasetConfig,
-    load_dataset_config,
-)
+from config_driven_etl.dataset_config import load_dataset_config
 from config_driven_etl.extract import ExtractError, raw_csv_path
 from config_driven_etl.load import LoadError, processed_parquet_path
 from config_driven_etl.pipeline import (
@@ -21,12 +18,9 @@ from config_driven_etl.pipeline import (
     load_dataset,
     transform_dataset,
 )
+from fixture_outcomes import FIXTURES, OUTCOMES, fixture_config
 
-FIXTURES = Path(__file__).parents[1] / "fixtures"
-
-
-def fixture_config(name: str) -> DatasetConfig:
-    return load_dataset_config(FIXTURES / name / f"{name}.yaml")
+LOANS = OUTCOMES["library_loans"]
 
 
 def fake_client(table_rows: int) -> mock.MagicMock:
@@ -54,7 +48,9 @@ class ExtractDatasetTest(PipelineTestCase):
 
         result = extract_dataset(config, self.data_dir, self.session)
 
-        self.assertEqual(result, StageResult(rows_in=None, rows_out=13))
+        self.assertEqual(
+            result, StageResult(rows_in=None, rows_out=LOANS.rows_in)
+        )
         self.assertTrue(raw_csv_path(self.data_dir, config.name).is_file())
         self.session.get.assert_not_called()
 
@@ -82,7 +78,7 @@ class ExtractDatasetTest(PipelineTestCase):
             raw_csv_path(self.data_dir, config.name),
             self.session,
         )
-        self.assertEqual(result.rows_out, 13)
+        self.assertEqual(result.rows_out, LOANS.rows_in)
 
     def test_unparsable_body_is_an_extract_error(self) -> None:
         directory = self.data_dir / "source"
@@ -103,21 +99,27 @@ class ExtractDatasetTest(PipelineTestCase):
 
 
 class TransformDatasetTest(PipelineTestCase):
-    def test_writes_verified_parquet_and_counts_rejections(self) -> None:
-        config = fixture_config("sensor_readings")
-        extract_dataset(config, self.data_dir, self.session)
+    def test_fixtures_match_their_expected_outcome(self) -> None:
+        for name, outcome in OUTCOMES.items():
+            with self.subTest(dataset=name):
+                config = fixture_config(name)
+                extract_dataset(config, self.data_dir, self.session)
 
-        result = transform_dataset(config, self.data_dir)
+                result = transform_dataset(config, self.data_dir)
 
-        self.assertEqual(
-            (result.rows_in, result.rows_out, result.rows_rejected),
-            (14, 5, 9),
-        )
-        assert result.rejections is not None
-        self.assertEqual(sum(result.rejections.values()), 9)
-        self.assertEqual(result.rejections["reading_id: duplicate"], 1)
-        path = processed_parquet_path(self.data_dir, config.name)
-        self.assertEqual(pl.read_parquet(path).height, 5)
+                self.assertEqual(
+                    (result.rows_in, result.rows_out, result.rows_rejected),
+                    (
+                        outcome.rows_in,
+                        outcome.rows_valid,
+                        outcome.rows_rejected,
+                    ),
+                )
+                self.assertEqual(result.rejections, outcome.rejections)
+                path = processed_parquet_path(self.data_dir, config.name)
+                self.assertEqual(
+                    pl.read_parquet(path).height, outcome.rows_valid
+                )
 
     def test_missing_raw_file_is_an_extract_error(self) -> None:
         with self.assertRaises(ExtractError):
@@ -132,18 +134,24 @@ class LoadDatasetTest(PipelineTestCase):
         transform_dataset(self.config, self.data_dir)
 
     def test_loads_the_parquet_into_the_target_table(self) -> None:
-        client = fake_client(table_rows=4)
+        client = fake_client(table_rows=LOANS.rows_valid)
 
         result = load_dataset(self.config, self.data_dir, client, "dataset")
 
-        self.assertEqual(result, StageResult(rows_in=4, rows_out=4))
+        self.assertEqual(
+            result,
+            StageResult(rows_in=LOANS.rows_valid, rows_out=LOANS.rows_valid),
+        )
         args, _ = client.load_table_from_file.call_args
         self.assertEqual(args[1], "project.dataset.library_loans")
 
     def test_row_count_mismatch_fails(self) -> None:
-        client = fake_client(table_rows=3)
+        loaded = LOANS.rows_valid - 1
+        client = fake_client(table_rows=loaded)
 
-        with self.assertRaisesRegex(LoadError, "3 rows loaded, expected 4"):
+        with self.assertRaisesRegex(
+            LoadError, f"{loaded} rows loaded, expected {LOANS.rows_valid}"
+        ):
             load_dataset(self.config, self.data_dir, client, "dataset")
 
 

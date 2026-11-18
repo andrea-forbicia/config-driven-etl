@@ -9,7 +9,7 @@ from unittest import mock
 import polars as pl
 import requests
 
-from config_driven_etl.dataset_config import Source, load_dataset_config
+from config_driven_etl.dataset_config import Source
 from config_driven_etl.extract import (
     CHUNK_SIZE,
     TIMEOUT,
@@ -21,6 +21,7 @@ from config_driven_etl.extract import (
     raw_csv_path,
     scan_raw_csv,
 )
+from fixture_outcomes import OUTCOMES, fixture_config
 
 URL = "https://example.org/data.csv"
 
@@ -553,9 +554,6 @@ class ScanRawCsvTest(unittest.TestCase):
                 )
 
 
-FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
-
-
 class FixtureExtractTest(unittest.TestCase):
     """Extract both fixture datasets end to end, without network."""
 
@@ -565,7 +563,7 @@ class FixtureExtractTest(unittest.TestCase):
         self.data_dir = Path(directory.name)
 
     def extract(self, name: str) -> pl.DataFrame:
-        config = load_dataset_config(FIXTURES_DIR / name / f"{name}.yaml")
+        config = fixture_config(name)
         assert config.source.path is not None
         destination = raw_csv_path(self.data_dir, config.name)
 
@@ -576,7 +574,7 @@ class FixtureExtractTest(unittest.TestCase):
     def test_sensor_readings(self) -> None:
         frame = self.extract("sensor_readings")
 
-        self.assertEqual(frame.height, 14)
+        self.assertEqual(frame.height, OUTCOMES["sensor_readings"].rows_in)
         self.assertEqual(
             frame.columns,
             [
@@ -593,7 +591,7 @@ class FixtureExtractTest(unittest.TestCase):
     def test_library_loans(self) -> None:
         frame = self.extract("library_loans")
 
-        self.assertEqual(frame.height, 13)
+        self.assertEqual(frame.height, OUTCOMES["library_loans"].rows_in)
         self.assertEqual(frame.columns[-1], "Internal Note")
         self.assertEqual(set(frame.dtypes), {pl.String})
         self.assertEqual(frame["Title"][1], "Guerra; pace")
