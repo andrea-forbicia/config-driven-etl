@@ -4,10 +4,12 @@ name: nyc_squirrel_census
 source:
   url: https://data.cityofnewyork.us/api/views/vfnx-vebw/rows.csv?accessType=DOWNLOAD
 columns:
+  # Hectare, shift, date (MMDD + "18" for 2018) and sighting number.
   - source: "Unique Squirrel ID"
     name: squirrel_id
     type: string
     nullable: false
+    pattern: '\d{1,2}[A-I]-(AM|PM)-\d{4}-\d{2}'
   - source: "Date"
     name: sighting_date
     type: date
@@ -16,6 +18,7 @@ columns:
   - source: "Shift"
     name: shift
     type: string
+    allowed_values: ["AM", "PM"]
   - source: "X"
     name: longitude
     type: float
@@ -28,29 +31,38 @@ columns:
     min: -90
     max: 90
     nullable: false
+  # Park grid: row 01-42, column A-I.
   - source: "Hectare"
     name: hectare
     type: string
+    pattern: '\d{2}[A-I]'
   - source: "Hectare Squirrel Number"
     name: hectare_squirrel_number
     type: int
     min: 1
+  # "?" when the sighter could not tell.
   - source: "Age"
     name: age
     type: string
+    null_values: ["?"]
+    allowed_values: ["Adult", "Juvenile"]
   - source: "Primary Fur Color"
     name: primary_fur_color
     type: string
+    allowed_values: ["Gray", "Cinnamon", "Black"]
   - source: "Highlight Fur Color"
     name: highlight_fur_color
     type: string
   - source: "Location"
     name: location
     type: string
-  # "FALSE" when the squirrel is on the ground, otherwise a height in feet.
+    allowed_values: ["Ground Plane", "Above Ground"]
+  # Height in feet; "FALSE" when the squirrel is on the ground plane.
   - source: "Above Ground Sighter Measurement"
     name: above_ground_measurement
-    type: string
+    type: int
+    min: 0
+    null_values: ["FALSE"]
   - source: "Running"
     name: running
     type: bool

@@ -5,10 +5,12 @@ name: wa_ev_population
 source:
   url: https://data.wa.gov/api/views/f6w7-q2d2/rows.csv?accessType=DOWNLOAD
 columns:
+  # VINs never use I, O or Q.
   - source: "VIN (1-10)"
     name: vin_1_10
     type: string
     nullable: false
+    pattern: '[A-HJ-NPR-Z0-9]{10}'
   - source: "County"
     name: county
     type: string
@@ -18,10 +20,13 @@ columns:
   - source: "State"
     name: state
     type: string
-  # Codes, not quantities: kept as strings.
+    pattern: '[A-Z]{2}'
+  # Codes, not quantities: kept as strings. Some out-of-state codes have
+  # lost their leading zero upstream; those rows are rejected.
   - source: "Postal Code"
     name: postal_code
     type: string
+    pattern: '\d{5}'
   - source: "Model Year"
     name: model_year
     type: int
@@ -38,14 +43,22 @@ columns:
   - source: "Electric Vehicle Type"
     name: electric_vehicle_type
     type: string
+    allowed_values:
+      - "Battery Electric Vehicle (BEV)"
+      - "Plug-in Hybrid Electric Vehicle (PHEV)"
   - source: "Clean Alternative Fuel Vehicle (CAFV) Eligibility"
     name: cafv_eligibility
     type: string
-  # Miles; 0 means the range has not been researched.
+    allowed_values:
+      - "Clean Alternative Fuel Vehicle Eligible"
+      - "Not eligible due to low battery range"
+      - "Eligibility unknown as battery range has not been researched"
+  # Miles; 0 means the range has not been researched, so it is unknown.
   - source: "Electric Range"
     name: electric_range
     type: int
     min: 0
+    null_values: ["0"]
   - source: "Legislative District"
     name: legislative_district
     type: string
@@ -61,9 +74,11 @@ columns:
   - source: "Electric Utility"
     name: electric_utility
     type: string
+  # Census tract: 2-digit state, 3-digit county, 6-digit tract.
   - source: "2020 GEOID"
     name: geoid_2020
     type: string
+    pattern: '\d{11}'
 rules:
   deduplicate_on: [dol_vehicle_id]
   drop_unmapped_columns: false

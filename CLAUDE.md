@@ -408,7 +408,7 @@ change.
 - [x] `pattern` per `string` column: a regex the whole value must match,
       otherwise rejected as `<name>: no pattern match`. Validated at config
       time with the same engine Polars uses `[feat]`
-- [ ] Use the new rules in the real datasets where they apply `[feat]`
+- [x] Use the new rules in the real datasets where they apply `[feat]`
 - [ ] `CHANGELOG.md` entry, version bump to `1.2.0`, annotated tag `v1.2.0`
       `[chore]`
 

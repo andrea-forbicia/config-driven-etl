@@ -54,13 +54,18 @@ columns:
     name: rms
     type: float
     min: 0
+  # Format checks only: a rolling feed can add new networks or event
+  # types at any time, so closed value sets would drop real events.
   - source: "net"
     name: net
     type: string
+    pattern: '[a-z]{2}'
+  # Network code followed by the network's own event code.
   - source: "id"
     name: id
     type: string
     nullable: false
+    pattern: '[a-z]{2}[a-z0-9]+'
   - source: "updated"
     name: updated
     type: datetime
