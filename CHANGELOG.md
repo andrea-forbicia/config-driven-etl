@@ -22,6 +22,12 @@ and this project adheres to
   `validate` rejects entries that are not valid for the column type,
   repeat another entry after the cast, fall outside `min` / `max`, or
   are also in `null_values`.
+- `pattern` column option on string columns: a regex the whole value
+  must match, otherwise the row is rejected as
+  `<name>: no pattern match`. Values are matched as written. `validate`
+  compiles the pattern with the Polars (Rust) regex engine, so
+  look-around and backreferences are rejected before any data is read,
+  and rejects `allowed_values` entries that do not match it.
 
 ## [1.1.0] - 2026-11-18
 

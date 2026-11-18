@@ -111,10 +111,12 @@ class Column(_StrictModel):
     max: float | None = Field(default=None, allow_inf_nan=False)
     null_values: tuple[str, ...] = ()
     allowed_values: tuple[str, ...] | None = None
+    pattern: str | None = None
 
     @model_validator(mode="after")
     def _check_type_options(self) -> Self:
         problems = _null_values_problems(self.null_values, self.type)
+        problems += _pattern_problems(self.pattern, self.type)
         problems += _allowed_values_problems(self)
         has_bounds = self.min is not None or self.max is not None
         if has_bounds and self.type not in NUMERIC_TYPES:
@@ -216,7 +218,74 @@ def _allowed_values_problems(column: Column) -> list[str]:
                     f"'allowed_values' entry {text!r} is also in "
                     "'null_values' and can never be accepted"
                 )
+    if (
+        column.type is ColumnType.STRING
+        and column.pattern
+        and _regex_problem(column.pattern) is None
+    ):
+        matches = pl.Series(values, dtype=pl.String).str.contains(
+            full_match(column.pattern)
+        )
+        problems += [
+            f"'allowed_values' entry {text!r} does not match 'pattern' "
+            "and can never be accepted"
+            for text, match in zip(values, matches, strict=True)
+            if text != "" and not match
+        ]
     return problems
+
+
+def full_match(pattern: str) -> str:
+    """Regex that matches pattern against the whole value only."""
+    # Unlike ^ and $, \A and \z stay anchored to the whole value even
+    # when the pattern sets (?m).
+    return rf"\A(?:{pattern})\z"
+
+
+def _pattern_problems(
+    pattern: str | None, column_type: ColumnType
+) -> list[str]:
+    if pattern is None:
+        return []
+    if column_type is not ColumnType.STRING:
+        return [
+            f"'pattern' is only allowed on string columns, not {column_type}"
+        ]
+    if pattern == "":
+        return ["'pattern' must not be empty"]
+    reason = _regex_problem(pattern)
+    if reason is not None:
+        return [f"'pattern' {pattern!r} is not a valid regex: {reason}"]
+    return []
+
+
+def _regex_problem(pattern: str) -> str | None:
+    """Why Polars cannot compile pattern, or None if it can.
+
+    Python's re accepts look-around and backreferences, which Polars
+    rejects, so only Polars can validate a pattern.
+    """
+    probe = pl.Series([""], dtype=pl.String)
+    # Unwrapped first: "a)|(b" only compiles once wrapped in a group.
+    try:
+        probe.str.contains(pattern)
+    except pl.exceptions.PolarsError as error:
+        return _regex_reason(error)
+    # A trailing (?x) comment compiles alone but swallows the anchor.
+    try:
+        probe.str.contains(full_match(pattern))
+    except pl.exceptions.PolarsError as error:
+        return f"{_regex_reason(error)} once anchored to the whole value"
+    return None
+
+
+def _regex_reason(error: BaseException) -> str:
+    # The parser puts its reason on an "error: " line after a caret
+    # diagram of the pattern.
+    for line in str(error).splitlines():
+        if line.startswith("error: "):
+            return line.removeprefix("error: ")
+    return error_reason(error)
 
 
 def _parse_allowed_values(

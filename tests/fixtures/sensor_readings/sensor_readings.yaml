@@ -15,7 +15,8 @@
 #  11  valid       -50 and 0 on the inclusive min bounds
 #  12  valid       " N/A " temperature_c is a null_values sentinel
 #  13  rejected    sensor_id: "-" sentinel in a non-nullable column
-# Totals: 13 rows, 5 valid, 8 rejected.
+#  14  rejected    reading_id: "R013" does not match the pattern
+# Totals: 14 rows, 5 valid, 9 rejected.
 name: sensor_readings
 source:
   path: sensor_readings.csv
@@ -24,6 +25,7 @@ columns:
     name: reading_id
     type: string
     nullable: false
+    pattern: 'r\d{3}'
   - source: "Sensor"
     name: sensor_id
     type: string

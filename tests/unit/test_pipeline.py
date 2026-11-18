@@ -111,10 +111,10 @@ class TransformDatasetTest(PipelineTestCase):
 
         self.assertEqual(
             (result.rows_in, result.rows_out, result.rows_rejected),
-            (13, 5, 8),
+            (14, 5, 9),
         )
         assert result.rejections is not None
-        self.assertEqual(sum(result.rejections.values()), 8)
+        self.assertEqual(sum(result.rejections.values()), 9)
         self.assertEqual(result.rejections["reading_id: duplicate"], 1)
         path = processed_parquet_path(self.data_dir, config.name)
         self.assertEqual(pl.read_parquet(path).height, 5)

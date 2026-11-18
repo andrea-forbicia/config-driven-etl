@@ -63,6 +63,16 @@ source:
 #             Entries are quoted, valid for the type, unique after the
 #             cast, within min / max, not in null_values, and not "".
 #             Nulls are left to nullable. Optional, at least one entry.
+#   pattern:  regex that the whole value must match, on string columns
+#             only; rows with any other value are rejected as no pattern
+#             match. Values are matched as written, so "" is checked like
+#             any other value (use null_values: [""] to read it as null).
+#             Uses Polars (Rust) regex syntax: no look-around and no
+#             backreferences; use (?i) to ignore case. Write it in single
+#             quotes: double quotes treat backslashes as escapes, and
+#             many regex characters are special in plain YAML. Nulls are
+#             left to nullable; allowed_values entries must match it.
+#             Optional, not empty.
 # Rejected rows are counted and logged, never silently dropped.
 columns:
   - source: "Date"
@@ -81,6 +91,7 @@ columns:
     type: string
     nullable: false
     allowed_values: ["ST01", "ST02", "ST03"]
+    pattern: 'ST\d{2}'
 
   - source: "Temp (C)"
     name: temperature_c

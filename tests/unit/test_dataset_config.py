@@ -701,6 +701,133 @@ class ColumnTypeOptionsTest(unittest.TestCase):
 
         self.assertEqual(column.allowed_values, ("1", "10"))
 
+    def test_pattern_defaults_to_unset(self) -> None:
+        column = Column.model_validate(
+            {"source": "x", "name": "x", "type": "string"}
+        )
+
+        self.assertIsNone(column.pattern)
+
+    def test_valid_patterns(self) -> None:
+        for pattern in [r"[A-Z]{2}\d{2}", r"(?i)[a-z]+", "a|b", r"\d*"]:
+            with self.subTest(pattern=pattern):
+                column = Column.model_validate(
+                    {
+                        "source": "x",
+                        "name": "x",
+                        "type": "string",
+                        "pattern": pattern,
+                    }
+                )
+
+                self.assertEqual(column.pattern, pattern)
+
+    def test_pattern_on_other_types(self) -> None:
+        cases = [
+            {"type": "int"},
+            {"type": "float"},
+            {"type": "bool"},
+            {"type": "date", "format": "%Y-%m-%d"},
+            {"type": "datetime", "format": "%Y-%m-%d"},
+        ]
+        for data in cases:
+            with self.subTest(type=data["type"]):
+                self.assertEqual(
+                    self.column_error({**data, "pattern": r"\d+"}),
+                    "'pattern' is only allowed on string columns, not "
+                    f"{data['type']}",
+                )
+
+    def test_empty_pattern(self) -> None:
+        self.assertEqual(
+            self.column_error({"type": "string", "pattern": ""}),
+            "'pattern' must not be empty",
+        )
+
+    def test_pattern_the_parser_rejects(self) -> None:
+        # The first three compile in Python's re but not in Polars.
+        cases = [
+            (
+                r"(?=A)\w+",
+                "look-around, including look-ahead and "
+                "look-behind, is not supported",
+            ),
+            (r"(\w)\1", "backreferences are not supported"),
+            ("(a", "unclosed group"),
+            (
+                "[z-a]",
+                "invalid character class range, the start must be <= the end",
+            ),
+        ]
+        for pattern, reason in cases:
+            with self.subTest(pattern=pattern):
+                self.assertEqual(
+                    self.column_error({"type": "string", "pattern": pattern}),
+                    f"'pattern' {pattern!r} is not a valid regex: {reason}",
+                )
+
+    def test_pattern_that_only_compiles_once_wrapped(self) -> None:
+        # Wrapped in \A(?:...)\z it would compile and mean "a" or "b".
+        self.assertEqual(
+            self.column_error({"type": "string", "pattern": "a)|(b"}),
+            "'pattern' 'a)|(b' is not a valid regex: unopened group",
+        )
+
+    def test_pattern_that_only_fails_once_wrapped(self) -> None:
+        # A (?x) comment runs to the end of the line, over the anchor.
+        self.assertEqual(
+            self.column_error({"type": "string", "pattern": "(?x)a # c"}),
+            "'pattern' '(?x)a # c' is not a valid regex: unclosed group "
+            "once anchored to the whole value",
+        )
+
+    def test_regex_error_reason(self) -> None:
+        cases = [
+            (
+                "regex parse error:\n    (a\nerror: unclosed group\n",
+                "unclosed group",
+            ),
+            ("some other failure\nmore", "some other failure"),
+            ("", "ComputeError"),
+        ]
+        for message, reason in cases:
+            with self.subTest(message=message):
+                error = pl.exceptions.ComputeError(message)
+
+                self.assertEqual(dataset_config._regex_reason(error), reason)
+
+    def test_allowed_values_must_match_the_pattern(self) -> None:
+        self.assertEqual(
+            self.allowed_error(
+                "string", ["AB12", "ab12", "AB1"], pattern=r"[A-Z]{2}\d{2}"
+            ),
+            "'allowed_values' entry 'ab12' does not match 'pattern' and "
+            "can never be accepted\n"
+            "'allowed_values' entry 'AB1' does not match 'pattern' and "
+            "can never be accepted",
+        )
+
+    def test_allowed_values_with_invalid_pattern(self) -> None:
+        self.assertEqual(
+            self.allowed_error("string", ["A"], pattern="(a"),
+            "'pattern' '(a' is not a valid regex: unclosed group",
+        )
+
+    def test_pattern_on_int_column_is_reported_once(self) -> None:
+        self.assertEqual(
+            self.allowed_error("int", ["1", "2"], pattern="x"),
+            "'pattern' is only allowed on string columns, not int",
+        )
+
+    def test_empty_allowed_value_is_reported_once_with_pattern(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self.allowed_error("string", ["", "A"], pattern="A"),
+            "'allowed_values' may not contain ''; use 'nullable' and "
+            "'null_values' for blank values",
+        )
+
     def test_reports_every_problem(self) -> None:
         message = self.column_error(
             {
