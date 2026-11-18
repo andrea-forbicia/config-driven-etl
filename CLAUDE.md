@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: 9 — String quality rules**
+**Current phase: done — `v1.2.0` released**
 
 How to use this plan:
 
@@ -409,7 +409,7 @@ change.
       otherwise rejected as `<name>: no pattern match`. Validated at config
       time with the same engine Polars uses `[feat]`
 - [x] Use the new rules in the real datasets where they apply `[feat]`
-- [ ] `CHANGELOG.md` entry, version bump to `1.2.0`, annotated tag `v1.2.0`
+- [x] `CHANGELOG.md` entry, version bump to `1.2.0`, annotated tag `v1.2.0`
       `[chore]`
 
 Exit: every rule is covered by unit and system tests, documented in
