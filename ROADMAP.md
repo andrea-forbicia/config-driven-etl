@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 10 — Housekeeping**
+**Current phase: done — `v1.2.1` released**
 
 How to use this plan:
 
@@ -208,7 +208,7 @@ than one check.
 - [x] Fix the flaky `test_failed_write_keeps_the_previous_output`: once in
       CI a failed `write_parquet` left its `.part` file behind. Start from
       a test that reproduces it, then fix the cause `[fix]`
-- [ ] Release `v1.2.1` with the overlap rule and Parquet write fixes:
+- [x] Release `v1.2.1` with the overlap rule and Parquet write fixes:
       version bump, `CHANGELOG.md` section, annotated tag `[chore]`
 
 Exit: pyright runs on every pull request; adding a fixture row changes its
