@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pyright==1.1.414",
     "pytest>=9.2,<10",
     "pytest-cov>=7.1,<8",
     "ruff==0.17.4",
@@ -73,6 +74,4 @@ skip_covered = true
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.12"
-venvPath = "."
-venv = ".venv"
 typeCheckingMode = "standard"

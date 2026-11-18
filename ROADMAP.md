@@ -194,7 +194,7 @@ Goal: a tidier base before larger features: type checks in CI, test
 expectations stated once, and a deliberate rule for values that break more
 than one check.
 
-- [ ] Pyright in `ci.yml` on `src/` and `tests/` with the existing
+- [x] Pyright in `ci.yml` on `src/` and `tests/` with the existing
       `[tool.pyright]` settings. Decide first between adding a pinned
       `pyright` to the `dev` extras (a new dependency) and a pinned GitHub
       Action `[ci]`
