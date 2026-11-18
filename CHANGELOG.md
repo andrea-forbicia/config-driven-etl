@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-18
+
 ### Added
 
 - Dataset config for the 2018 Central Park Squirrel Census
@@ -212,5 +214,6 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/andrea-forbicia/config-driven-etl/releases/tag/v1.0.0
