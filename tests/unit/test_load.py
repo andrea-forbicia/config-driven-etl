@@ -68,14 +68,14 @@ class WriteParquetTest(unittest.TestCase):
         self.destination = self.dir / "processed" / "sample" / "x.parquet"
 
     def test_writes_every_row_and_type(self) -> None:
-        write_parquet(typed_frame(), self.destination)
+        write_parquet(typed_frame().collect(), self.destination)
 
         written = pl.read_parquet(self.destination)
         self.assertEqual(written.schema, typed_frame().collect_schema())
         self.assertTrue(written.equals(typed_frame().collect()))
 
     def test_uses_snappy_compression(self) -> None:
-        write_parquet(typed_frame(), self.destination)
+        write_parquet(typed_frame().collect(), self.destination)
 
         metadata = pq.ParquetFile(self.destination).metadata
         codecs = {
@@ -86,34 +86,63 @@ class WriteParquetTest(unittest.TestCase):
         self.assertEqual(codecs, {"SNAPPY"})
 
     def test_replaces_the_previous_output(self) -> None:
-        write_parquet(typed_frame(), self.destination)
+        write_parquet(typed_frame().collect(), self.destination)
 
-        write_parquet(pl.LazyFrame({"other": [7]}), self.destination)
+        write_parquet(pl.DataFrame({"other": [7]}), self.destination)
 
         self.assertEqual(pl.read_parquet(self.destination).rows(), [(7,)])
 
+    def failing_write(self) -> mock.MagicMock:
+        """Make the Parquet writer leave a partial file, then fail."""
+
+        def write(frame: pl.DataFrame, file: Path, **options: object) -> None:
+            Path(file).write_bytes(b"PAR1 partial")
+            raise OSError("No space left on device")
+
+        patcher = mock.patch.object(
+            pl.DataFrame, "write_parquet", autospec=True, side_effect=write
+        )
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
     def test_failed_write_keeps_the_previous_output(self) -> None:
-        write_parquet(typed_frame(), self.destination)
-        failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64))
+        write_parquet(typed_frame().collect(), self.destination)
+        writer = self.failing_write()
 
         with self.assertRaises(LoadError) as context:
-            write_parquet(failing, self.destination)
+            write_parquet(pl.DataFrame({"a": [1]}), self.destination)
 
         self.assertTrue(
             str(context.exception).startswith(
                 f"{self.destination}: cannot write Parquet: "
             )
         )
+        writer.assert_called_once()
+        self.assertIn("No space left on device", str(context.exception))
+        self.assertEqual(pl.read_parquet(self.destination).height, 2)
+        self.assertEqual(
+            list(self.destination.parent.iterdir()), [self.destination]
+        )
+
+    def test_polars_write_error_keeps_the_previous_output(self) -> None:
+        write_parquet(typed_frame().collect(), self.destination)
+        # Parquet has no Object type, so Polars fails during the write.
+        unwritable = pl.DataFrame({"o": [object()]}, schema={"o": pl.Object})
+
+        with self.assertRaises(LoadError) as context:
+            write_parquet(unwritable, self.destination)
+
+        self.assertIn("Object", str(context.exception))
         self.assertEqual(pl.read_parquet(self.destination).height, 2)
         self.assertEqual(
             list(self.destination.parent.iterdir()), [self.destination]
         )
 
     def test_failed_first_write_leaves_no_file(self) -> None:
-        failing = pl.LazyFrame({"a": ["x"]}).select(pl.col("a").cast(pl.Int64))
+        self.failing_write()
 
         with self.assertRaises(LoadError):
-            write_parquet(failing, self.destination)
+            write_parquet(pl.DataFrame({"a": [1]}), self.destination)
 
         self.assertEqual(list(self.destination.parent.iterdir()), [])
 
@@ -122,12 +151,12 @@ class WriteParquetTest(unittest.TestCase):
         blocker.write_text("a file, not a directory", encoding="utf-8")
 
         with self.assertRaises(LoadError) as context:
-            write_parquet(typed_frame(), self.destination)
+            write_parquet(typed_frame().collect(), self.destination)
 
         self.assertIn("cannot write Parquet", str(context.exception))
 
     def test_empty_frame_keeps_its_schema(self) -> None:
-        write_parquet(typed_frame().head(0), self.destination)
+        write_parquet(typed_frame().head(0).collect(), self.destination)
 
         written = pl.read_parquet(self.destination)
         self.assertEqual(written.height, 0)
@@ -166,7 +195,7 @@ class VerifyParquetTest(unittest.TestCase):
         self.path = Path(directory.name) / "x.parquet"
 
     def problems(self, lf: pl.LazyFrame, expected_rows: int = 2) -> list[str]:
-        write_parquet(lf, self.path)
+        write_parquet(lf.collect(), self.path)
         with self.assertRaises(LoadError) as context:
             verify_parquet(self.path, typed_config(), expected_rows)
         prefix = f"{self.path}: "
@@ -175,12 +204,12 @@ class VerifyParquetTest(unittest.TestCase):
         return [line.removeprefix(prefix) for line in lines]
 
     def test_accepts_matching_file(self) -> None:
-        write_parquet(typed_frame(), self.path)
+        write_parquet(typed_frame().collect(), self.path)
 
         verify_parquet(self.path, typed_config(), expected_rows=2)
 
     def test_accepts_empty_file(self) -> None:
-        write_parquet(typed_frame().head(0), self.path)
+        write_parquet(typed_frame().head(0).collect(), self.path)
 
         verify_parquet(self.path, typed_config(), expected_rows=0)
 
@@ -268,7 +297,7 @@ class FixtureParquetTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as directory:
                     path = processed_parquet_path(Path(directory), name)
 
-                    write_parquet(valid.lazy(), path)
+                    write_parquet(valid, path)
 
                     verify_parquet(path, config, valid.height)
                     self.assertEqual(valid.height, outcome.rows_valid)
@@ -579,12 +608,12 @@ class ParquetRowCountTest(unittest.TestCase):
         self.path = Path(directory.name) / "x.parquet"
 
     def test_counts_rows(self) -> None:
-        write_parquet(typed_frame(), self.path)
+        write_parquet(typed_frame().collect(), self.path)
 
         self.assertEqual(parquet_row_count(self.path), 2)
 
     def test_empty_file(self) -> None:
-        write_parquet(typed_frame().head(0), self.path)
+        write_parquet(typed_frame().head(0).collect(), self.path)
 
         self.assertEqual(parquet_row_count(self.path), 0)
 

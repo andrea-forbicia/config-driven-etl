@@ -80,7 +80,7 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
             f"{raw}: cannot read CSV: {error_reason(error)}"
         ) from error
     path = processed_parquet_path(data_dir, config.name)
-    write_parquet(valid.lazy(), path)
+    write_parquet(valid, path)
     verify_parquet(path, config, valid.height)
     return StageResult(
         rows_in=valid.height + rejected.height,

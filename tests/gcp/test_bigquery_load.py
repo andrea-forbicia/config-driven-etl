@@ -84,7 +84,7 @@ class BigQueryLoadTest(unittest.TestCase):
         valid = transform(scan_raw_csv(source.path, source), config)
         frame = recent_partitions(valid.valid.collect(), config)
         path = processed_parquet_path(self.data_dir, name)
-        write_parquet(frame.lazy(), path)
+        write_parquet(frame, path)
         verify_parquet(path, config, frame.height)
         # A unique name keeps concurrent runs and leftovers apart.
         table = f"{config.target.table}_test_{uuid.uuid4().hex[:12]}"
