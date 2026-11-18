@@ -71,6 +71,22 @@ def _quoted(names: Sequence[str]) -> str:
     return ", ".join(f"'{name}'" for name in names)
 
 
+def apply_null_values(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Turn each column's null_values sentinels into null.
+
+    A value matches when its trimmed text equals a sentinel exactly,
+    case included; any other value is left as written.
+    """
+    nulls = {
+        column.name: pl.when(
+            ~pl.col(column.name).str.strip_chars().is_in(column.null_values)
+        ).then(pl.col(column.name))
+        for column in config.columns
+        if column.null_values
+    }
+    return lf.with_columns(**nulls)
+
+
 def cast_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     """Cast every mapped column to the Polars type of its config type.
 
@@ -231,7 +247,14 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     lf = select_columns(lf, config)
     # Duplicates come last: only rows that passed every other rule may
     # claim a key.
-    for step in (cast_columns, check_nullable, check_range, check_duplicates):
+    steps = (
+        apply_null_values,
+        cast_columns,
+        check_nullable,
+        check_range,
+        check_duplicates,
+    )
+    for step in steps:
         lf = step(lf, config)
     return split_rejected(lf)
 

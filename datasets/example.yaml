@@ -35,7 +35,9 @@ source:
 #             text, each header mapped at most once.
 #   name:     target column name, unique. Required.
 #   type:     string | int | float | bool | date | datetime. Required.
-#   nullable: false rejects rows where the value is empty. Default: true.
+#   nullable: false rejects rows where the value is null: an empty
+#             value on non-string columns, or a null_values sentinel.
+#             Default: true.
 #   format:   parse pattern, required on date and datetime columns and
 #             not allowed on other types (e.g. "%Y-%m-%d"). Uses Polars
 #             (chrono) directives and must include the year, month and
@@ -44,6 +46,15 @@ source:
 #   min, max: inclusive bounds on int and float columns, not allowed on
 #             other types; rows outside the range are rejected. Optional,
 #             finite numbers, min not above max.
+#   null_values: sentinel strings read as null before the type is
+#             checked (e.g. ["N/A", "-"]). A value matches when its
+#             trimmed text equals an entry exactly, case included;
+#             other values are left as written. Entries are unique and
+#             have no surrounding whitespace; "" is allowed only on
+#             string columns, where blank values are otherwise kept.
+#             With nullable: false, a sentinel is rejected as null.
+#             Quote every entry: unquoted NULL or -999 are not strings
+#             in YAML and fail validation. Default: [].
 # Rejected rows are counted and logged, never silently dropped.
 columns:
   - source: "Date"
@@ -67,6 +78,7 @@ columns:
     type: float
     min: -90
     max: 60
+    null_values: ["N/A", "-"]
 
   - source: "Humidity (%)"
     name: humidity_pct

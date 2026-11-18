@@ -102,10 +102,11 @@ class Column(_StrictModel):
     # A NaN bound would make every range comparison false.
     min: float | None = Field(default=None, allow_inf_nan=False)
     max: float | None = Field(default=None, allow_inf_nan=False)
+    null_values: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _check_type_options(self) -> Self:
-        problems = []
+        problems = _null_values_problems(self.null_values, self.type)
         has_bounds = self.min is not None or self.max is not None
         if has_bounds and self.type not in NUMERIC_TYPES:
             problems.append(
@@ -134,6 +135,27 @@ class Column(_StrictModel):
                 problems.append(f"'format' {self.format!r} {reason}")
         _raise_if_any(problems)
         return self
+
+
+def _null_values_problems(
+    null_values: Sequence[str], column_type: ColumnType
+) -> list[str]:
+    problems = [
+        f"'null_values' entry {value!r} has leading or trailing "
+        "whitespace and can never match a trimmed value"
+        for value in null_values
+        if value != value.strip()
+    ]
+    if "" in null_values and column_type is not ColumnType.STRING:
+        problems.append(
+            "'null_values' may only contain '' on string columns, where "
+            "blank values are kept; other types already read them as null"
+        )
+    problems += [
+        f"'null_values' entry {value!r} is listed more than once"
+        for value in _duplicates(null_values)
+    ]
+    return problems
 
 
 # Day, month, hour, minute, second and microsecond all differ, so a
