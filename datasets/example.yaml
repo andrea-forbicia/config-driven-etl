@@ -62,7 +62,9 @@ source:
 #             column format; strings are compared exactly as written.
 #             Entries are quoted, valid for the type, unique after the
 #             cast, within min / max, not in null_values, and not "".
-#             Nulls are left to nullable. Optional, at least one entry.
+#             A value that fails min / max or pattern gets only that
+#             reason, not also "not allowed". Nulls are left to nullable.
+#             Optional, at least one entry.
 #   pattern:  regex that the whole value must match, on string columns
 #             only; rows with any other value are rejected as no pattern
 #             match. Values are matched as written, so "" is checked like

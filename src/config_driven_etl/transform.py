@@ -148,21 +148,11 @@ def check_range(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     to the row's REJECTIONS list. Nulls, including values cast_columns
     rejected as invalid, are not compared.
     """
-    reasons: list[pl.Expr] = []
-    for column in config.columns:
-        value = pl.col(column.name)
-        if column.min is not None:
-            reasons.append(
-                pl.when(value < column.min).then(
-                    pl.lit(f"{column.name}: below min")
-                )
-            )
-        if column.max is not None:
-            reasons.append(
-                pl.when(value > column.max).then(
-                    pl.lit(f"{column.name}: above max")
-                )
-            )
+    reasons = [
+        pl.when(fails).then(pl.lit(f"{column.name}: {reason}"))
+        for column in config.columns
+        for reason, fails in _range_failures(column).items()
+    ]
     return lf.with_columns(_rejections(lf, reasons))
 
 
@@ -174,7 +164,9 @@ def check_allowed_values(
     Values are compared after casting, so "01" matches an allowed "1"
     on an int column; string values are compared as written. Adds
     '<name>: not allowed' to the row's REJECTIONS list. Nulls, including
-    values cast_columns rejected as invalid, are not compared.
+    values cast_columns rejected as invalid, are not compared, and
+    neither are values that fail the column's min / max or pattern:
+    check_range and check_pattern give them the more specific reason.
     """
     reasons: list[pl.Expr] = []
     for column in config.columns:
@@ -182,10 +174,20 @@ def check_allowed_values(
             continue
         value = pl.col(column.name)
         allowed = _typed_allowed_values(column).implode()
+        other_failures = list(_range_failures(column).values())
+        if (pattern := _pattern_failure(column)) is not None:
+            other_failures.append(pattern)
+        fails_other_check = (
+            pl.any_horizontal(other_failures)
+            if other_failures
+            else pl.lit(False)
+        )
         reasons.append(
-            pl.when(value.is_not_null() & ~value.is_in(allowed)).then(
-                pl.lit(f"{column.name}: not allowed")
-            )
+            pl.when(
+                value.is_not_null()
+                & ~value.is_in(allowed)
+                & ~fails_other_check
+            ).then(pl.lit(f"{column.name}: not allowed"))
         )
     return lf.with_columns(_rejections(lf, reasons))
 
@@ -197,17 +199,11 @@ def check_pattern(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     value. Adds '<name>: no pattern match' to the row's REJECTIONS list.
     Nulls are not compared.
     """
-    reasons: list[pl.Expr] = []
-    for column in config.columns:
-        if column.pattern is None:
-            continue
-        value = pl.col(column.name)
-        matches = value.str.contains(full_match(column.pattern))
-        reasons.append(
-            pl.when(value.is_not_null() & ~matches).then(
-                pl.lit(f"{column.name}: no pattern match")
-            )
-        )
+    reasons = [
+        pl.when(fails).then(pl.lit(f"{column.name}: no pattern match"))
+        for column in config.columns
+        if (fails := _pattern_failure(column)) is not None
+    ]
     return lf.with_columns(_rejections(lf, reasons))
 
 
@@ -303,6 +299,27 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     for step in steps:
         lf = step(lf, config)
     return split_rejected(lf)
+
+
+def _range_failures(column: Column) -> dict[str, pl.Expr]:
+    """check_range's conditions for column, by reason; null on nulls."""
+    value = pl.col(column.name)
+    failures: dict[str, pl.Expr] = {}
+    if column.min is not None:
+        failures["below min"] = value < column.min
+    if column.max is not None:
+        failures["above max"] = value > column.max
+    return failures
+
+
+def _pattern_failure(column: Column) -> pl.Expr | None:
+    """check_pattern's condition for column, or None without a pattern."""
+    if column.pattern is None:
+        return None
+    value = pl.col(column.name)
+    return value.is_not_null() & ~value.str.contains(
+        full_match(column.pattern)
+    )
 
 
 def _invalid_reason(column: Column) -> str:

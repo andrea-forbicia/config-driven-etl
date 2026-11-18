@@ -43,9 +43,10 @@ OUTCOMES: Mapping[str, FixtureOutcome] = {
         },
     ),
     "library_loans": FixtureOutcome(
-        rows_in=13,
+        rows_in=14,
         rows_valid=4,
         rejections={
+            "branch_code: no pattern match": 1,
             "branch_code: not allowed": 1,
             "branch_code: null": 1,
             "fine_eur: below min": 1,

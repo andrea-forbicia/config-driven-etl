@@ -17,7 +17,9 @@
 #  11  rejected    fine_eur: "1,5" uses a decimal comma
 #  12  valid       empty title, which is nullable; 5 on the inclusive max
 #  13  rejected    branch_code: "099" is not in allowed_values
-# Totals: 13 rows, 4 valid, 9 rejected. "Internal Note" is dropped.
+#  14  rejected    branch_code: "7" lost its leading zeros; it fails the
+#                  pattern, and only the pattern reason is given
+# Totals: 14 rows, 4 valid, 10 rejected. "Internal Note" is dropped.
 name: library_loans
 source:
   path: library_loans.csv
@@ -35,6 +37,7 @@ columns:
     type: string
     nullable: false
     allowed_values: ["007", "012", "031", "040"]
+    pattern: '\d{3}'
   - source: "Title"
     name: title
     type: string
