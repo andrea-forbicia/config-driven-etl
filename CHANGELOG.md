@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The real dataset configs use the new rules:
+  - `nyc_squirrel_census`: `above_ground_measurement` is now an `int`
+    (`"FALSE"`, meaning on the ground, is read as null), `age` reads `"?"`
+    as null, and IDs, hectares, shift, age, fur color and location are
+    checked with `pattern` or `allowed_values`.
+  - `wa_ev_population`: `electric_range` reads `0` ("range not
+    researched") as null; VIN, state, postal code and census tract are
+    checked with `pattern`, and vehicle type and CAFV eligibility with
+    `allowed_values`. Postal codes that lost their leading zero upstream
+    are now rejected.
+  - `usgs_earthquakes`: network and event IDs are checked with `pattern`;
+    no closed value sets, since the feed can add new values at any time.
+
 ### Added
 
 - `null_values` column option: sentinel strings (for example `"N/A"` or
