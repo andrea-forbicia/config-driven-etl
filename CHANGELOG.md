@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-18
+
+### Changed
+
+- CI type-checks `src/` and `tests/` with pyright, pinned in the `dev`
+  extras so local and CI runs use the same version.
+
 ### Fixed
 
 - A value that fails `min` / `max` or `pattern` is no longer also
@@ -19,11 +26,6 @@ and this project adheres to
   processed directory: Polars' streaming writer could still create it
   after raising. The already collected rows are now written
   synchronously.
-
-### Changed
-
-- CI type-checks `src/` and `tests/` with pyright, pinned in the `dev`
-  extras so local and CI runs use the same version.
 
 ## [1.2.0] - 2026-11-18
 
@@ -269,7 +271,8 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/andrea-forbicia/config-driven-etl/releases/tag/v1.0.0

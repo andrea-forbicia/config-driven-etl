@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "config-driven-etl"
-version = "1.2.0"
+version = "1.2.1"
 description = "Generic batch ETL from open-data CSV to BigQuery, driven by YAML."
 readme = "README.md"
 license = "MIT"
