@@ -15,6 +15,13 @@ and this project adheres to
   case-sensitive on the trimmed value; other values are left as written.
   A sentinel in a column with `nullable: false` is rejected as
   `<name>: null`.
+- `allowed_values` column option on string, int and date columns: a
+  closed set of accepted values; rows with any other value are rejected
+  as `<name>: not allowed`. Values are compared after the cast, so `"01"`
+  matches `"1"` on an int column; strings are compared as written.
+  `validate` rejects entries that are not valid for the column type,
+  repeat another entry after the cast, fall outside `min` / `max`, or
+  are also in `null_values`.
 
 ## [1.1.0] - 2026-11-18
 

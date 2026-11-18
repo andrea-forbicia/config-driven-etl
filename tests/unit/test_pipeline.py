@@ -54,7 +54,7 @@ class ExtractDatasetTest(PipelineTestCase):
 
         result = extract_dataset(config, self.data_dir, self.session)
 
-        self.assertEqual(result, StageResult(rows_in=None, rows_out=12))
+        self.assertEqual(result, StageResult(rows_in=None, rows_out=13))
         self.assertTrue(raw_csv_path(self.data_dir, config.name).is_file())
         self.session.get.assert_not_called()
 
@@ -82,7 +82,7 @@ class ExtractDatasetTest(PipelineTestCase):
             raw_csv_path(self.data_dir, config.name),
             self.session,
         )
-        self.assertEqual(result.rows_out, 12)
+        self.assertEqual(result.rows_out, 13)
 
     def test_unparsable_body_is_an_extract_error(self) -> None:
         directory = self.data_dir / "source"

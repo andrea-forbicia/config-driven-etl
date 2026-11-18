@@ -5,12 +5,15 @@ from typing import Any
 
 import polars as pl
 
-from config_driven_etl.dataset_config import DatasetConfig
+from config_driven_etl import dataset_config
+from config_driven_etl import transform as transform_module
+from config_driven_etl.dataset_config import Column, ColumnType, DatasetConfig
 from config_driven_etl.transform import (
     REJECTIONS,
     TransformError,
     apply_null_values,
     cast_columns,
+    check_allowed_values,
     check_duplicates,
     check_nullable,
     check_range,
@@ -30,17 +33,20 @@ def typed_config(
     bounds: dict[str, dict[str, float]] | None = None,
     deduplicate_on: Iterable[str] = (),
     null_values: dict[str, list[str]] | None = None,
+    allowed_values: dict[str, list[str]] | None = None,
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
     Temporal columns get the format from formats, or a default ISO one.
     Columns in required are not nullable; bounds maps a column to its
     min and max keys; deduplicate_on lists the key columns; null_values
-    maps a column to its sentinel strings.
+    maps a column to its sentinel strings; allowed_values maps a column
+    to its accepted values.
     """
     formats = formats or {}
     bounds = bounds or {}
     null_values = null_values or {}
+    allowed_values = allowed_values or {}
     columns = []
     for name, type_ in types.items():
         column: dict[str, Any] = {
@@ -50,6 +56,7 @@ def typed_config(
             "nullable": name not in required,
             **bounds.get(name, {}),
             "null_values": null_values.get(name, []),
+            "allowed_values": allowed_values.get(name),
         }
         if type_ in TEMPORAL_FORMATS:
             column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
@@ -750,6 +757,158 @@ class CheckRangeTest(unittest.TestCase):
         self.assertIsInstance(check_range(lf, config), pl.LazyFrame)
 
 
+def check_allowed(
+    types: dict[str, str],
+    data: dict[str, list[str | None]],
+    allowed_values: dict[str, list[str]],
+    **options: Any,
+) -> pl.DataFrame:
+    config = typed_config(types, allowed_values=allowed_values, **options)
+    lf = cast_columns(raw_frame(data), config)
+    return check_allowed_values(lf, config).collect()
+
+
+class CheckAllowedValuesTest(unittest.TestCase):
+    def test_rejects_values_outside_the_set(self) -> None:
+        cases = [
+            ("string", ["A", "B", "C"], ["A", "B"]),
+            ("int", ["1", "2", "3"], ["1", "2"]),
+            (
+                "date",
+                ["2026-01-01", "2026-01-02", "2026-01-03"],
+                ["2026-01-01", "2026-01-02"],
+            ),
+        ]
+        for type_, data, allowed in cases:
+            with self.subTest(type=type_):
+                result = check_allowed(
+                    {"x": type_}, {"x": data}, {"x": allowed}
+                )
+
+                self.assertEqual(
+                    result[REJECTIONS].to_list(),
+                    [[], [], ["x: not allowed"]],
+                )
+
+    def test_strings_are_compared_as_written(self) -> None:
+        result = check_allowed(
+            {"s": "string"}, {"s": ["A", "a", " A", "A "]}, {"s": ["A"]}
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(),
+            [[], ["s: not allowed"], ["s: not allowed"], ["s: not allowed"]],
+        )
+
+    def test_ints_are_compared_after_the_cast(self) -> None:
+        result = check_allowed(
+            {"i": "int"}, {"i": ["01", " 1 ", "+1", "10"]}, {"i": ["1"]}
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [[], [], [], ["i: not allowed"]]
+        )
+
+    def test_dates_use_the_column_format(self) -> None:
+        result = check_allowed(
+            {"d": "date"},
+            {"d": ["02/01/2026", "2/1/2026", "03/01/2026"]},
+            {"d": ["02/01/2026"]},
+            formats={"d": "%d/%m/%Y"},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [[], [], ["d: not allowed"]]
+        )
+
+    def test_nulls_are_not_compared(self) -> None:
+        result = check_allowed(
+            {"s": "string", "i": "int"},
+            {"s": [None], "i": [None]},
+            {"s": ["A"], "i": ["1"]},
+        )
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[]])
+
+    def test_invalid_value_is_rejected_once(self) -> None:
+        result = check_allowed({"i": "int"}, {"i": ["abc"]}, {"i": ["1"]})
+
+        self.assertEqual(result[REJECTIONS].to_list(), [["i: invalid int"]])
+
+    def test_columns_without_allowed_values_are_not_checked(self) -> None:
+        result = check_allowed(
+            {"a": "string", "b": "string"},
+            {"a": ["A"], "b": ["anything"]},
+            {"a": ["A"]},
+        )
+
+        self.assertEqual(result[REJECTIONS].to_list(), [[]])
+
+    def test_one_reason_per_column(self) -> None:
+        result = check_allowed(
+            {"a": "string", "b": "int"},
+            {"a": ["x"], "b": ["9"]},
+            {"a": ["A"], "b": ["1"]},
+        )
+
+        self.assertEqual(
+            result[REJECTIONS].to_list(),
+            [["a: not allowed", "b: not allowed"]],
+        )
+
+    def test_does_not_change_values(self) -> None:
+        result = check_allowed({"i": "int"}, {"i": ["01", "9"]}, {"i": ["1"]})
+
+        self.assertEqual(result["i"].to_list(), [1, 9])
+
+    def test_works_without_earlier_rejections(self) -> None:
+        config = typed_config({"s": "string"}, allowed_values={"s": ["A"]})
+
+        result = check_allowed_values(raw_frame({"s": ["A", "B"]}), config)
+
+        self.assertEqual(
+            result.collect()[REJECTIONS].to_list(), [[], ["s: not allowed"]]
+        )
+
+    def test_empty_input(self) -> None:
+        result = check_allowed({"i": "int"}, {"i": []}, {"i": ["1"]})
+
+        self.assertEqual(result.height, 0)
+        self.assertEqual(result.schema[REJECTIONS], pl.List(pl.String))
+
+    def test_config_and_transform_cast_entries_alike(self) -> None:
+        # validate and the transform parse entries in separate places;
+        # an entry valid for one but null for the other never matches.
+        cases = [
+            ("int", ["1", "01", "+1", " 1", "1.0", "abc"]),
+            ("date", ["2026-01-01", "2026-1-2", "0999-12-31", "26-01-01"]),
+        ]
+        for type_, values in cases:
+            with self.subTest(type=type_):
+                column = Column.model_construct(
+                    source="x",
+                    name="x",
+                    type=ColumnType(type_),
+                    format="%Y-%m-%d" if type_ == "date" else None,
+                    min=None,
+                    max=None,
+                    null_values=(),
+                    allowed_values=tuple(values),
+                )
+
+                self.assertEqual(
+                    dataset_config._parse_allowed_values(values, column),
+                    transform_module._typed_allowed_values(column).to_list(),
+                )
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"s": "string"}, allowed_values={"s": ["A"]})
+
+        result = check_allowed_values(raw_frame({"s": ["A"]}), config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
+
+
 def dedupe(
     types: dict[str, str],
     data: dict[str, list[str | None]],
@@ -1059,6 +1218,36 @@ class TransformTest(unittest.TestCase):
         )
         self.assertEqual(
             result.rejection_counts.collect().rows(), [("b: null", 1)]
+        )
+
+    def test_not_allowed_rows_do_not_claim_a_key(self) -> None:
+        config = typed_config(
+            {"id": "int", "code": "string"},
+            deduplicate_on=["id"],
+            allowed_values={"code": ["A"]},
+        )
+        raw = raw_frame({"id": ["1", "1"], "code": ["Z", "A"]})
+
+        result = transform(raw, config)
+
+        self.assertEqual(result.valid.collect().rows(), [(1, "A")])
+        self.assertEqual(
+            result.rejection_counts.collect().rows(),
+            [("code: not allowed", 1)],
+        )
+
+    def test_null_in_required_column_is_not_also_not_allowed(self) -> None:
+        config = typed_config(
+            {"code": "string"},
+            required=["code"],
+            allowed_values={"code": ["A"]},
+        )
+
+        result = transform(raw_frame({"code": [None, "A"]}), config)
+
+        self.assertEqual(result.valid.collect().rows(), [("A",)])
+        self.assertEqual(
+            result.rejection_counts.collect().rows(), [("code: null", 1)]
         )
 
     def test_sentinels_are_null_before_the_range_check(self) -> None:

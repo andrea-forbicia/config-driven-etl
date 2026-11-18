@@ -44,6 +44,13 @@ class ColumnType(StrEnum):
 
 NUMERIC_TYPES = frozenset({ColumnType.INT, ColumnType.FLOAT})
 TEMPORAL_TYPES = frozenset({ColumnType.DATE, ColumnType.DATETIME})
+# Earlier dates and datetimes are rejected as malformed.
+MIN_YEAR = 1000
+# Float equality is fragile, bool has two values and a closed set of
+# timestamps is rare, so the rule is limited to these.
+ALLOWED_VALUES_TYPES = frozenset(
+    {ColumnType.STRING, ColumnType.INT, ColumnType.DATE}
+)
 
 # Validation context key: directory that relative source paths start from.
 _BASE_DIR = "base_dir"
@@ -103,10 +110,12 @@ class Column(_StrictModel):
     min: float | None = Field(default=None, allow_inf_nan=False)
     max: float | None = Field(default=None, allow_inf_nan=False)
     null_values: tuple[str, ...] = ()
+    allowed_values: tuple[str, ...] | None = None
 
     @model_validator(mode="after")
     def _check_type_options(self) -> Self:
         problems = _null_values_problems(self.null_values, self.type)
+        problems += _allowed_values_problems(self)
         has_bounds = self.min is not None or self.max is not None
         if has_bounds and self.type not in NUMERIC_TYPES:
             problems.append(
@@ -156,6 +165,89 @@ def _null_values_problems(
         for value in _duplicates(null_values)
     ]
     return problems
+
+
+def _allowed_values_problems(column: Column) -> list[str]:
+    values = column.allowed_values
+    if values is None:
+        return []
+    if column.type not in ALLOWED_VALUES_TYPES:
+        return [
+            "'allowed_values' is only allowed on string, int and date "
+            f"columns, not {column.type}"
+        ]
+    if not values:
+        return ["'allowed_values' must list at least one value"]
+    problems = []
+    if "" in values:
+        problems.append(
+            "'allowed_values' may not contain ''; use 'nullable' and "
+            "'null_values' for blank values"
+        )
+    typed = _parse_allowed_values(values, column)
+    if typed is None:
+        # The format is missing or invalid, which is already reported.
+        return problems
+    first_seen: dict[object, str] = {}
+    for text, value in zip(values, typed, strict=True):
+        if text == "":
+            continue
+        if value is None:
+            problems.append(
+                f"'allowed_values' entry {text!r} is not a valid {column.type}"
+            )
+        elif value in first_seen:
+            earlier = first_seen[value]
+            problems.append(
+                f"'allowed_values' entry {text!r} is listed more than once"
+                if text == earlier
+                else f"'allowed_values' entry {text!r} is the same "
+                f"{column.type} as {earlier!r}"
+            )
+        else:
+            first_seen[value] = text
+            if _outside_bounds(value, column):
+                problems.append(
+                    f"'allowed_values' entry {text!r} is outside 'min' / "
+                    "'max' and can never be accepted"
+                )
+            if text in column.null_values:
+                problems.append(
+                    f"'allowed_values' entry {text!r} is also in "
+                    "'null_values' and can never be accepted"
+                )
+    return problems
+
+
+def _parse_allowed_values(
+    values: Sequence[str], column: Column
+) -> list[Any] | None:
+    """Values as the transform casts them, None where one is invalid.
+
+    Returns None when the column's date format cannot be used.
+    """
+    series = pl.Series(values, dtype=pl.String)
+    if column.type is ColumnType.INT:
+        return series.cast(pl.Int64, strict=False).to_list()
+    if column.type is ColumnType.DATE:
+        # An unusable format parses every value as null instead of failing.
+        if (
+            column.format is None
+            or _format_problem(column.format, column.type) is not None
+        ):
+            return None
+        dates = series.str.to_date(column.format, strict=False)
+        return [
+            value if value is None or value.year >= MIN_YEAR else None
+            for value in dates.to_list()
+        ]
+    return list(values)
+
+
+def _outside_bounds(value: Any, column: Column) -> bool:
+    return (column.min is not None and value < column.min) or (
+        column.max is not None and value > column.max
+    )
 
 
 # Day, month, hour, minute, second and microsecond all differ, so a

@@ -278,15 +278,15 @@ class PipelineCommandsTest(unittest.TestCase):
                 for event in events
             ],
             [
-                ("stage_completed", "extract", "library_loans", None, 12, 0),
-                ("stage_completed", "transform", "library_loans", 12, 4, 8),
+                ("stage_completed", "extract", "library_loans", None, 13, 0),
+                ("stage_completed", "transform", "library_loans", 13, 4, 9),
                 ("stage_completed", "load", "library_loans", 4, 4, 0),
             ],
         )
         for event in events:
             self.assertEqual(event["level"], "info")
             self.assertGreaterEqual(event["duration_s"], 0)
-        self.assertEqual(sum(events[1]["rejections"].values()), 8)
+        self.assertEqual(sum(events[1]["rejections"].values()), 9)
         self.client.load_table_from_file.assert_called_once()
 
     def test_logs_never_contain_settings(self) -> None:

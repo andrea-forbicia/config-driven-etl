@@ -11,3 +11,4 @@ Loan No;Branch Code;Title;Loan Date;Due Date;Fine (EUR);Renewals;Internal Note
 abc;007;Dune;12/02/2026;26/02/2026;0;0;
 1009;007;Dune;13/02/2026;27/02/2026;1,5;0;
 1010;040;;14/02/2026;28/02/2026;0;5;late
+1011;099;Emma;15/02/2026;01/03/2026;0;0;

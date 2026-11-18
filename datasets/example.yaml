@@ -55,6 +55,14 @@ source:
 #             With nullable: false, a sentinel is rejected as null.
 #             Quote every entry: unquoted NULL or -999 are not strings
 #             in YAML and fail validation. Default: [].
+#   allowed_values: closed set of accepted values on string, int and
+#             date columns; rows with any other value are rejected as
+#             not allowed. Values are compared after the cast, so "01"
+#             matches "1" on an int column and dates are read with the
+#             column format; strings are compared exactly as written.
+#             Entries are quoted, valid for the type, unique after the
+#             cast, within min / max, not in null_values, and not "".
+#             Nulls are left to nullable. Optional, at least one entry.
 # Rejected rows are counted and logged, never silently dropped.
 columns:
   - source: "Date"
@@ -72,6 +80,7 @@ columns:
     name: station_id
     type: string
     nullable: false
+    allowed_values: ["ST01", "ST02", "ST03"]
 
   - source: "Temp (C)"
     name: temperature_c
