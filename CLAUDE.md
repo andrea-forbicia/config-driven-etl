@@ -52,6 +52,7 @@ The author is building this to learn. Unless explicitly asked to implement:
 | CLI            | `typer`                                        |
 | Tests          | `pytest` runner, `unittest` (TestCase, mock)   |
 | Lint / format  | `ruff`                                         |
+| Type check     | `pyright` (standard mode)                      |
 | Packaging      | `pyproject.toml`, `src/` layout                |
 | Container      | Docker                                         |
 | CI/CD          | GitHub Actions                                 |
@@ -147,6 +148,7 @@ GOOGLE_APPLICATION_CREDENTIALS=   # local only, path outside the repo
 ```
 pip install -e ".[dev]"                                # setup
 ruff check . && ruff format --check .
+pyright                                                # type check
 pytest tests/unit
 pytest tests/system
 pytest -m gcp                                          # real BigQuery
@@ -196,8 +198,8 @@ docker build -t config-driven-etl .
 ## CI/CD
 
 - `ci.yml` on every pull request and push to `main`: ruff check, ruff format
-  check, validate every file in `datasets/`, unit tests, system tests,
-  coverage threshold, Docker build.
+  check, pyright, validate every file in `datasets/`, unit tests, system
+  tests, coverage threshold, Docker build.
 - `release.yml` on `v*` tags: run CI, build the image, create a GitHub Release
   from the changelog entry.
 - GCP tests run only on `main` and only when secrets are available.

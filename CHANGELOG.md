@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- CI type-checks `src/` and `tests/` with pyright, pinned in the `dev`
+  extras so local and CI runs use the same version.
+
 ## [1.2.0] - 2026-11-18
 
 ### Added

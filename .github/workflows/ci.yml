@@ -40,6 +40,11 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      # No venv is configured, so pyright resolves imports through the
+      # python on PATH, the one pip installed into.
+      - name: Pyright
+        run: pyright
+
       - name: Validate dataset files
         run: python -m config_driven_etl validate datasets
 

@@ -98,6 +98,7 @@ contain secrets.
 
 ```
 ruff check . && ruff format --check .
+pyright
 pytest tests/unit tests/system --cov=config_driven_etl
 pytest -m gcp              # real BigQuery sandbox, needs .env and credentials
 ```
