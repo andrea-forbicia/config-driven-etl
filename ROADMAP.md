@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: done — `v1.2.0` released**
+**Current phase: 10 — Housekeeping**
 
 How to use this plan:
 
@@ -187,6 +187,29 @@ change.
 Exit: every rule is covered by unit and system tests, documented in
 `datasets/example.yaml`, and used by at least one real dataset; the GitHub
 Release for `v1.2.0` exists.
+
+## Phase 10 — Housekeeping
+
+Goal: a tidier base before larger features: type checks in CI, test
+expectations stated once, and a deliberate rule for values that break more
+than one check.
+
+- [ ] Pyright in `ci.yml` on `src/` and `tests/` with the existing
+      `[tool.pyright]` settings. Decide first between adding a pinned
+      `pyright` to the `dev` extras (a new dependency) and a pinned GitHub
+      Action `[ci]`
+- [ ] State each fixture's expected outcome (rows in, valid, rejected,
+      rejections by reason) once, and read it in the extract, pipeline,
+      CLI, load and system tests instead of repeating the numbers `[test]`
+- [ ] Decide whether a value outside `min` / `max` or `pattern` that is
+      also outside `allowed_values` gets both reasons or only the more
+      specific one; implement, test and document the choice in
+      `datasets/example.yaml` `[fix]` (or `[docs]` if both reasons stay)
+- [ ] `CHANGELOG.md` entry and annotated tag `v1.2.1`, only if the previous
+      checkbox changes the rejection counts `[chore]`
+
+Exit: pyright runs on every pull request; adding a fixture row changes its
+expected numbers in one place; the overlap rule is tested and documented.
 
 ## Definition of done
 
