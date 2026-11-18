@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import polars as pl
 
 from config_driven_etl.dataset_config import (
+    MIN_YEAR,
     Column,
     ColumnType,
     DatasetConfig,
@@ -14,9 +15,6 @@ from config_driven_etl.dataset_config import (
 # List of rejection reasons per row. The '#' keeps it apart from target
 # names, which are lowercase identifiers.
 REJECTIONS = "#rejections"
-
-# Earlier dates and datetimes are rejected as malformed.
-MIN_YEAR = 1000
 
 # Polars dtype that cast_columns produces for each column type.
 POLARS_TYPES: dict[ColumnType, pl.DataType] = {
@@ -167,6 +165,30 @@ def check_range(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     return lf.with_columns(_rejections(lf, reasons))
 
 
+def check_allowed_values(
+    lf: pl.LazyFrame, config: DatasetConfig
+) -> pl.LazyFrame:
+    """Reject rows with a value outside a column's allowed_values.
+
+    Values are compared after casting, so "01" matches an allowed "1"
+    on an int column; string values are compared as written. Adds
+    '<name>: not allowed' to the row's REJECTIONS list. Nulls, including
+    values cast_columns rejected as invalid, are not compared.
+    """
+    reasons: list[pl.Expr] = []
+    for column in config.columns:
+        if column.allowed_values is None:
+            continue
+        value = pl.col(column.name)
+        allowed = _typed_allowed_values(column).implode()
+        reasons.append(
+            pl.when(value.is_not_null() & ~value.is_in(allowed)).then(
+                pl.lit(f"{column.name}: not allowed")
+            )
+        )
+    return lf.with_columns(_rejections(lf, reasons))
+
+
 def check_duplicates(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     """Reject repeated keys from rules.deduplicate_on.
 
@@ -252,6 +274,7 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
         cast_columns,
         check_nullable,
         check_range,
+        check_allowed_values,
         check_duplicates,
     )
     for step in steps:
@@ -310,6 +333,15 @@ _CASTS: dict[ColumnType, Callable[[pl.Expr, Column], pl.Expr]] = {
     ColumnType.DATE: _to_date,
     ColumnType.DATETIME: _to_datetime,
 }
+
+
+def _typed_allowed_values(column: Column) -> pl.Series:
+    # The same casts as the data, so both sides compare as equal values.
+    values = pl.Series(column.allowed_values, dtype=pl.String)
+    cast = _CASTS.get(column.type)
+    if cast is None:
+        return values
+    return pl.select(cast(pl.lit(values), column)).to_series()
 
 
 def _rejections(lf: pl.LazyFrame, reasons: Sequence[pl.Expr]) -> pl.Expr:

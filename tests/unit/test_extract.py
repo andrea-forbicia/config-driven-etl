@@ -593,7 +593,7 @@ class FixtureExtractTest(unittest.TestCase):
     def test_library_loans(self) -> None:
         frame = self.extract("library_loans")
 
-        self.assertEqual(frame.height, 12)
+        self.assertEqual(frame.height, 13)
         self.assertEqual(frame.columns[-1], "Internal Note")
         self.assertEqual(set(frame.dtypes), {pl.String})
         self.assertEqual(frame["Title"][1], "Guerra; pace")

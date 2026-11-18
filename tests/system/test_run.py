@@ -155,9 +155,12 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(frame["loan_date"].to_list()[0], date(2026, 2, 3))
         transform = self.events(result)[1]
         self.assertEqual(
-            (transform["rows_in"], transform["rows_out"]), (12, 4)
+            (transform["rows_in"], transform["rows_out"]), (13, 4)
         )
         self.assertEqual(transform["rejections"]["loan_date: invalid date"], 2)
+        self.assertEqual(
+            transform["rejections"]["branch_code: not allowed"], 1
+        )
         (job_config,) = self.bigquery.job_configs
         self.assertIsNone(job_config.time_partitioning)
 

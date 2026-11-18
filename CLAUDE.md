@@ -402,7 +402,7 @@ change.
       turned into null before the cast. Exact, case-sensitive match on the
       trimmed value. A sentinel in a column with `nullable: false` is
       rejected as `<name>: null` `[feat]`
-- [ ] `allowed_values` per column: a closed set of values; any other value
+- [x] `allowed_values` per column: a closed set of values; any other value
       is rejected as `<name>: not allowed`. Values are validated against the
       column type in the config `[feat]`
 - [ ] `pattern` per `string` column: a regex the whole value must match,

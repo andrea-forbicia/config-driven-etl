@@ -562,6 +562,145 @@ class ColumnTypeOptionsTest(unittest.TestCase):
 
         self.assertEqual(column.null_values, ("N/A", "n/a"))
 
+    def allowed(
+        self, column_type: str, values: list[str], **options: Any
+    ) -> Column:
+        if column_type in ("date", "datetime"):
+            options.setdefault("format", "%Y-%m-%d")
+        return Column.model_validate(
+            {
+                "source": "x",
+                "name": "x",
+                "type": column_type,
+                "allowed_values": values,
+                **options,
+            }
+        )
+
+    def allowed_error(
+        self, column_type: str, values: list[str], **options: Any
+    ) -> str:
+        with self.assertRaises(ValidationError) as context:
+            self.allowed(column_type, values, **options)
+
+        return error_message(context)
+
+    def test_allowed_values_default_to_unset(self) -> None:
+        column = Column.model_validate(
+            {"source": "x", "name": "x", "type": "string"}
+        )
+
+        self.assertIsNone(column.allowed_values)
+
+    def test_allowed_values_on_supported_types(self) -> None:
+        cases = [
+            ("string", ["A", "a", " A"]),
+            ("int", ["1", "-2", "+3"]),
+            ("date", ["2026-01-01", "2026-12-31"]),
+        ]
+        for column_type, values in cases:
+            with self.subTest(type=column_type):
+                column = self.allowed(column_type, values)
+
+                self.assertEqual(column.allowed_values, tuple(values))
+
+    def test_allowed_values_on_other_types(self) -> None:
+        for column_type in ["float", "bool", "datetime"]:
+            with self.subTest(type=column_type):
+                self.assertEqual(
+                    self.allowed_error(column_type, ["1"]),
+                    "'allowed_values' is only allowed on string, int and "
+                    f"date columns, not {column_type}",
+                )
+
+    def test_empty_allowed_values(self) -> None:
+        self.assertEqual(
+            self.allowed_error("string", []),
+            "'allowed_values' must list at least one value",
+        )
+
+    def test_empty_string_in_allowed_values(self) -> None:
+        self.assertEqual(
+            self.allowed_error("string", ["A", ""]),
+            "'allowed_values' may not contain ''; use 'nullable' and "
+            "'null_values' for blank values",
+        )
+
+    def test_allowed_values_that_cannot_be_cast(self) -> None:
+        cases = [
+            ("int", "abc"),
+            ("int", "1.0"),
+            ("int", " 1"),
+            ("date", "01/02/2026"),
+            ("date", "2026-02-31"),
+            ("date", "0999-12-31"),
+            ("date", "26-01-01"),
+        ]
+        for column_type, value in cases:
+            with self.subTest(type=column_type, value=value):
+                self.assertEqual(
+                    self.allowed_error(column_type, [value]),
+                    f"'allowed_values' entry {value!r} is not a valid "
+                    f"{column_type}",
+                )
+
+    def test_allowed_dates_use_the_column_format(self) -> None:
+        column = self.allowed("date", ["01/02/2026"], format="%d/%m/%Y")
+
+        self.assertEqual(column.allowed_values, ("01/02/2026",))
+
+    def test_invalid_format_is_reported_once(self) -> None:
+        message = self.allowed_error("date", ["2026-01-01"], format="%Q")
+
+        self.assertEqual(
+            message, "'format' '%Q' has an unknown or incomplete directive"
+        )
+
+    def test_duplicate_allowed_values(self) -> None:
+        cases = [
+            ("string", ["A", "A"], "'A' is listed more than once"),
+            ("int", ["1", "01"], "'01' is the same int as '1'"),
+            (
+                "date",
+                ["2026-01-01", "2026-1-1"],
+                "'2026-1-1' is the same date as '2026-01-01'",
+            ),
+        ]
+        for column_type, values, problem in cases:
+            with self.subTest(type=column_type):
+                self.assertEqual(
+                    self.allowed_error(column_type, values),
+                    f"'allowed_values' entry {problem}",
+                )
+
+    def test_strings_differing_in_case_or_spaces_are_distinct(self) -> None:
+        column = self.allowed("string", ["A", "a", "A "])
+
+        self.assertEqual(column.allowed_values, ("A", "a", "A "))
+
+    def test_allowed_values_outside_bounds(self) -> None:
+        self.assertEqual(
+            self.allowed_error("int", ["0", "5", "11"], min=1, max=10),
+            "'allowed_values' entry '0' is outside 'min' / 'max' and can "
+            "never be accepted\n"
+            "'allowed_values' entry '11' is outside 'min' / 'max' and can "
+            "never be accepted",
+        )
+
+    def test_allowed_value_that_is_also_a_null_value(self) -> None:
+        self.assertEqual(
+            self.allowed_error(
+                "string", ["A", "N/A"], null_values=["N/A", "-"]
+            ),
+            "'allowed_values' entry 'N/A' is also in 'null_values' and "
+            "can never be accepted",
+        )
+
+    def test_allowed_values_on_the_bounds(self) -> None:
+        column = self.allowed("int", ["1", "10"], min=1, max=10)
+
+        self.assertEqual(column.allowed_values, ("1", "10"))
+
     def test_reports_every_problem(self) -> None:
         message = self.column_error(
             {
@@ -900,6 +1039,24 @@ class LoadDatasetConfigTest(unittest.TestCase):
                 self.assertEqual(len(problems), 1)
                 self.assertTrue(
                     problems[0].startswith("columns[1].null_values[0]: "),
+                    problems[0],
+                )
+
+    def test_unquoted_allowed_values_are_not_strings(self) -> None:
+        # YAML reads an unquoted ISO date as a date and 007 as the int 7,
+        # losing the leading zeros a code column needs.
+        for entry in ["2026-01-01", "007"]:
+            with self.subTest(entry=entry):
+                text = VALID_YAML.replace(
+                    '    format: "%Y-%m-%d"\n',
+                    f'    format: "%Y-%m-%d"\n    allowed_values: [{entry}]\n',
+                )
+
+                problems = self.load_problems(self.write(text))
+
+                self.assertEqual(len(problems), 1)
+                self.assertTrue(
+                    problems[0].startswith("columns[0].allowed_values[0]: "),
                     problems[0],
                 )
 
