@@ -132,9 +132,12 @@ class RunCommandTest(unittest.TestCase):
         )
         transform = self.events(result)[1]
         self.assertEqual(
-            (transform["rows_in"], transform["rows_out"]), (13, 5)
+            (transform["rows_in"], transform["rows_out"]), (14, 5)
         )
-        self.assertEqual(transform["rows_rejected"], 8)
+        self.assertEqual(transform["rows_rejected"], 9)
+        self.assertEqual(
+            transform["rejections"]["reading_id: no pattern match"], 1
+        )
         self.assertEqual(transform["rejections"]["sensor_id: null"], 2)
         (job_config,) = self.bigquery.job_configs
         partitioning = job_config.time_partitioning

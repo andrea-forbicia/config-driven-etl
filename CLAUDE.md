@@ -405,9 +405,9 @@ change.
 - [x] `allowed_values` per column: a closed set of values; any other value
       is rejected as `<name>: not allowed`. Values are validated against the
       column type in the config `[feat]`
-- [ ] `pattern` per `string` column: a regex the whole value must match,
-      otherwise rejected as `<name>: pattern`. Validated at config time with
-      the same engine Polars uses `[feat]`
+- [x] `pattern` per `string` column: a regex the whole value must match,
+      otherwise rejected as `<name>: no pattern match`. Validated at config
+      time with the same engine Polars uses `[feat]`
 - [ ] Use the new rules in the real datasets where they apply `[feat]`
 - [ ] `CHANGELOG.md` entry, version bump to `1.2.0`, annotated tag `v1.2.0`
       `[chore]`

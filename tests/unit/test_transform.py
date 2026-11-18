@@ -16,6 +16,7 @@ from config_driven_etl.transform import (
     check_allowed_values,
     check_duplicates,
     check_nullable,
+    check_pattern,
     check_range,
     output_schema,
     select_columns,
@@ -34,6 +35,7 @@ def typed_config(
     deduplicate_on: Iterable[str] = (),
     null_values: dict[str, list[str]] | None = None,
     allowed_values: dict[str, list[str]] | None = None,
+    patterns: dict[str, str] | None = None,
 ) -> DatasetConfig:
     """Config whose source headers equal the target names.
 
@@ -41,12 +43,13 @@ def typed_config(
     Columns in required are not nullable; bounds maps a column to its
     min and max keys; deduplicate_on lists the key columns; null_values
     maps a column to its sentinel strings; allowed_values maps a column
-    to its accepted values.
+    to its accepted values; patterns maps a column to its regex.
     """
     formats = formats or {}
     bounds = bounds or {}
     null_values = null_values or {}
     allowed_values = allowed_values or {}
+    patterns = patterns or {}
     columns = []
     for name, type_ in types.items():
         column: dict[str, Any] = {
@@ -57,6 +60,7 @@ def typed_config(
             **bounds.get(name, {}),
             "null_values": null_values.get(name, []),
             "allowed_values": allowed_values.get(name),
+            "pattern": patterns.get(name),
         }
         if type_ in TEMPORAL_FORMATS:
             column["format"] = formats.get(name, TEMPORAL_FORMATS[type_])
@@ -770,7 +774,7 @@ def check_allowed(
 
 class CheckAllowedValuesTest(unittest.TestCase):
     def test_rejects_values_outside_the_set(self) -> None:
-        cases = [
+        cases: list[tuple[str, list[str | None], list[str]]] = [
             ("string", ["A", "B", "C"], ["A", "B"]),
             ("int", ["1", "2", "3"], ["1", "2"]),
             (
@@ -905,6 +909,99 @@ class CheckAllowedValuesTest(unittest.TestCase):
         config = typed_config({"s": "string"}, allowed_values={"s": ["A"]})
 
         result = check_allowed_values(raw_frame({"s": ["A"]}), config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
+
+
+def match(
+    data: list[str | None], pattern: str, **options: Any
+) -> list[list[str]]:
+    config = typed_config({"s": "string"}, patterns={"s": pattern}, **options)
+    lf = cast_columns(raw_frame({"s": data}), config)
+    return check_pattern(lf, config).collect()[REJECTIONS].to_list()
+
+
+NO_MATCH = ["s: no pattern match"]
+
+
+class CheckPatternTest(unittest.TestCase):
+    def test_rejects_values_that_do_not_match(self) -> None:
+        result = match(["AB12", "ab12", "AB1"], r"[A-Z]{2}\d{2}")
+
+        self.assertEqual(result, [[], NO_MATCH, NO_MATCH])
+
+    def test_whole_value_must_match(self) -> None:
+        result = match(["AB12", "xAB12", "AB12x", "AB12\n"], r"[A-Z]{2}\d{2}")
+
+        self.assertEqual(result, [[], NO_MATCH, NO_MATCH, NO_MATCH])
+
+    def test_alternation_applies_to_the_whole_value(self) -> None:
+        result = match(["a", "b", "ab", "xb"], "a|b")
+
+        self.assertEqual(result, [[], [], NO_MATCH, NO_MATCH])
+
+    def test_values_are_matched_as_written(self) -> None:
+        result = match(["AB12", " AB12", "AB12 "], r"[A-Z]{2}\d{2}")
+
+        self.assertEqual(result, [[], NO_MATCH, NO_MATCH])
+
+    def test_empty_string_is_checked(self) -> None:
+        self.assertEqual(match(["", "1"], r"\d+"), [NO_MATCH, []])
+
+    def test_empty_string_can_match_the_pattern(self) -> None:
+        self.assertEqual(match(["", "1"], r"\d*"), [[], []])
+
+    def test_multiline_flag_cannot_match_a_single_line(self) -> None:
+        result = match(["AB", "AB\n", "x\nAB"], "(?m)AB$")
+
+        self.assertEqual(result, [[], NO_MATCH, NO_MATCH])
+
+    def test_case_insensitive_flag(self) -> None:
+        self.assertEqual(match(["ab", "AB"], "(?i)ab"), [[], []])
+
+    def test_nulls_are_not_compared(self) -> None:
+        self.assertEqual(match([None], r"\d+"), [[]])
+
+    def test_empty_null_value_is_not_compared(self) -> None:
+        config = typed_config(
+            {"s": "string"}, patterns={"s": r"\d+"}, null_values={"s": [""]}
+        )
+        lf = apply_null_values(raw_frame({"s": ["", "x"]}), config)
+
+        result = check_pattern(cast_columns(lf, config), config)
+
+        self.assertEqual(
+            result.collect()[REJECTIONS].to_list(), [[], NO_MATCH]
+        )
+
+    def test_columns_without_pattern_are_not_checked(self) -> None:
+        config = typed_config(
+            {"a": "string", "b": "string"}, patterns={"a": "x"}
+        )
+
+        result = check_pattern(raw_frame({"a": ["x"], "b": ["y"]}), config)
+
+        self.assertEqual(result.collect()[REJECTIONS].to_list(), [[]])
+
+    def test_does_not_change_values(self) -> None:
+        config = typed_config({"s": "string"}, patterns={"s": ".*"})
+
+        result = check_pattern(raw_frame({"s": [" x "]}), config).collect()
+
+        self.assertEqual(result["s"].to_list(), [" x "])
+
+    def test_empty_input(self) -> None:
+        config = typed_config({"s": "string"}, patterns={"s": "x"})
+
+        result = check_pattern(raw_frame({"s": []}), config).collect()
+
+        self.assertEqual(result.height, 0)
+        self.assertEqual(result.schema[REJECTIONS], pl.List(pl.String))
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"s": "string"}, patterns={"s": "x"})
+
+        result = check_pattern(raw_frame({"s": ["x"]}), config)
 
         self.assertIsInstance(result, pl.LazyFrame)
 
@@ -1248,6 +1345,54 @@ class TransformTest(unittest.TestCase):
         self.assertEqual(result.valid.collect().rows(), [("A",)])
         self.assertEqual(
             result.rejection_counts.collect().rows(), [("code: null", 1)]
+        )
+
+    def test_pattern_mismatch_does_not_claim_a_key(self) -> None:
+        config = typed_config(
+            {"id": "int", "code": "string"},
+            deduplicate_on=["id"],
+            patterns={"code": "[A-Z]+"},
+        )
+        raw = raw_frame({"id": ["1", "1"], "code": ["a1", "AB"]})
+
+        result = transform(raw, config)
+
+        self.assertEqual(result.valid.collect().rows(), [(1, "AB")])
+        self.assertEqual(
+            result.rejection_counts.collect().rows(),
+            [("code: no pattern match", 1)],
+        )
+
+    def test_sentinels_are_null_before_the_pattern_check(self) -> None:
+        for required, counts in [([], []), (["s"], [("s: null", 1)])]:
+            with self.subTest(required=required):
+                config = typed_config(
+                    {"s": "string"},
+                    required=required,
+                    null_values={"s": ["-"]},
+                    patterns={"s": r"\d+"},
+                )
+
+                result = transform(raw_frame({"s": ["-", "1"]}), config)
+
+                self.assertEqual(
+                    result.rejection_counts.collect().rows(), counts
+                )
+
+    def test_value_outside_allowed_values_and_pattern(self) -> None:
+        # Every allowed value matches the pattern, so a value failing
+        # the pattern always fails allowed_values too; both are counted.
+        config = typed_config(
+            {"c": "string"},
+            allowed_values={"c": ["AB"]},
+            patterns={"c": "[A-Z]+"},
+        )
+
+        result = transform(raw_frame({"c": ["ab", "CD", "AB"]}), config)
+
+        self.assertEqual(
+            result.rejected.collect()[REJECTIONS].to_list(),
+            [["c: not allowed", "c: no pattern match"], ["c: not allowed"]],
         )
 
     def test_sentinels_are_null_before_the_range_check(self) -> None:

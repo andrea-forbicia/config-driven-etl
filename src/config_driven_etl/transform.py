@@ -10,6 +10,7 @@ from config_driven_etl.dataset_config import (
     Column,
     ColumnType,
     DatasetConfig,
+    full_match,
 )
 
 # List of rejection reasons per row. The '#' keeps it apart from target
@@ -189,6 +190,27 @@ def check_allowed_values(
     return lf.with_columns(_rejections(lf, reasons))
 
 
+def check_pattern(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Reject rows whose value does not fully match a column's pattern.
+
+    Values are matched as written, so "" is checked like any other
+    value. Adds '<name>: no pattern match' to the row's REJECTIONS list.
+    Nulls are not compared.
+    """
+    reasons: list[pl.Expr] = []
+    for column in config.columns:
+        if column.pattern is None:
+            continue
+        value = pl.col(column.name)
+        matches = value.str.contains(full_match(column.pattern))
+        reasons.append(
+            pl.when(value.is_not_null() & ~matches).then(
+                pl.lit(f"{column.name}: no pattern match")
+            )
+        )
+    return lf.with_columns(_rejections(lf, reasons))
+
+
 def check_duplicates(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     """Reject repeated keys from rules.deduplicate_on.
 
@@ -275,6 +297,7 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
         check_nullable,
         check_range,
         check_allowed_values,
+        check_pattern,
         check_duplicates,
     )
     for step in steps:

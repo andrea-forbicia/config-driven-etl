@@ -576,7 +576,7 @@ class FixtureExtractTest(unittest.TestCase):
     def test_sensor_readings(self) -> None:
         frame = self.extract("sensor_readings")
 
-        self.assertEqual(frame.height, 13)
+        self.assertEqual(frame.height, 14)
         self.assertEqual(
             frame.columns,
             [
