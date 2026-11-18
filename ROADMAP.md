@@ -201,15 +201,19 @@ than one check.
 - [x] State each fixture's expected outcome (rows in, valid, rejected,
       rejections by reason) once, and read it in the extract, pipeline,
       CLI, load and system tests instead of repeating the numbers `[test]`
-- [ ] Decide whether a value outside `min` / `max` or `pattern` that is
+- [x] Decide whether a value outside `min` / `max` or `pattern` that is
       also outside `allowed_values` gets both reasons or only the more
       specific one; implement, test and document the choice in
       `datasets/example.yaml` `[fix]` (or `[docs]` if both reasons stay)
-- [ ] `CHANGELOG.md` entry and annotated tag `v1.2.1`, only if the previous
-      checkbox changes the rejection counts `[chore]`
+- [ ] Fix the flaky `test_failed_write_keeps_the_previous_output`: once in
+      CI a failed `write_parquet` left its `.part` file behind. Start from
+      a test that reproduces it, then fix the cause `[fix]`
+- [ ] Release `v1.2.1` with the overlap rule and Parquet write fixes:
+      version bump, `CHANGELOG.md` section, annotated tag `[chore]`
 
 Exit: pyright runs on every pull request; adding a fixture row changes its
-expected numbers in one place; the overlap rule is tested and documented.
+expected numbers in one place; the overlap rule is tested and documented;
+a failed Parquet write never leaves a temporary file behind.
 
 ## Definition of done
 

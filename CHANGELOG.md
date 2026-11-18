@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- A value that fails `min` / `max` or `pattern` is no longer also
+  rejected as `<name>: not allowed` when the column has
+  `allowed_values`. Every allowed value passes those checks, so the
+  second reason was always redundant; rejection counts now give each
+  value one reason per column.
+
 ### Changed
 
 - CI type-checks `src/` and `tests/` with pyright, pinned in the `dev`

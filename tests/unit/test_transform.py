@@ -848,6 +848,34 @@ class CheckAllowedValuesTest(unittest.TestCase):
 
         self.assertEqual(result[REJECTIONS].to_list(), [[]])
 
+    def test_range_failure_is_not_also_not_allowed(self) -> None:
+        config = typed_config(
+            {"i": "int"},
+            bounds={"i": {"min": 1, "max": 4}},
+            allowed_values={"i": ["1", "2"]},
+        )
+        lf = cast_columns(raw_frame({"i": ["0", "5", "3", None]}), config)
+
+        result = check_allowed_values(check_range(lf, config), config)
+
+        self.assertEqual(
+            result.collect()[REJECTIONS].to_list(),
+            [["i: below min"], ["i: above max"], ["i: not allowed"], []],
+        )
+
+    def test_pattern_failure_is_not_also_not_allowed(self) -> None:
+        result = check_allowed(
+            {"s": "string"},
+            {"s": ["ab", "CD"]},
+            {"s": ["AB"]},
+            patterns={"s": "[A-Z]+"},
+        )
+
+        # check_pattern runs later and adds its own reason to "ab".
+        self.assertEqual(
+            result[REJECTIONS].to_list(), [[], ["s: not allowed"]]
+        )
+
     def test_one_reason_per_column(self) -> None:
         result = check_allowed(
             {"a": "string", "b": "int"},
@@ -1380,8 +1408,6 @@ class TransformTest(unittest.TestCase):
                 )
 
     def test_value_outside_allowed_values_and_pattern(self) -> None:
-        # Every allowed value matches the pattern, so a value failing
-        # the pattern always fails allowed_values too; both are counted.
         config = typed_config(
             {"c": "string"},
             allowed_values={"c": ["AB"]},
@@ -1392,7 +1418,7 @@ class TransformTest(unittest.TestCase):
 
         self.assertEqual(
             result.rejected.collect()[REJECTIONS].to_list(),
-            [["c: not allowed", "c: no pattern match"], ["c: not allowed"]],
+            [["c: no pattern match"], ["c: not allowed"]],
         )
 
     def test_sentinels_are_null_before_the_range_check(self) -> None:
