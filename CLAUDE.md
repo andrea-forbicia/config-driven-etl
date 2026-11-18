@@ -231,7 +231,7 @@ docker build -t config-driven-etl .
 
 ## Phases
 
-**Current phase: done — `v1.1.0` released**
+**Current phase: 9 — String quality rules**
 
 How to use this plan:
 
@@ -391,6 +391,30 @@ Goal: `v1.0.0` published.
 - [x] Annotated tag `v1.0.0` on `main` *(manual)*
 
 Exit: the GitHub Release for `v1.0.0` exists and its image builds.
+
+### Phase 9 — String quality rules
+
+Goal: the most common dirty values in open data are handled from the config
+alone. Every rule is an optional per-column field, so each one is a MINOR
+change.
+
+- [ ] `null_values` per column: sentinel strings (`"N/A"`, `"-"`, `"NULL"`)
+      turned into null before the cast. Exact, case-sensitive match on the
+      trimmed value. A sentinel in a column with `nullable: false` is
+      rejected as `<name>: null` `[feat]`
+- [ ] `allowed_values` per column: a closed set of values; any other value
+      is rejected as `<name>: not allowed`. Values are validated against the
+      column type in the config `[feat]`
+- [ ] `pattern` per `string` column: a regex the whole value must match,
+      otherwise rejected as `<name>: pattern`. Validated at config time with
+      the same engine Polars uses `[feat]`
+- [ ] Use the new rules in the real datasets where they apply `[feat]`
+- [ ] `CHANGELOG.md` entry, version bump to `1.2.0`, annotated tag `v1.2.0`
+      `[chore]`
+
+Exit: every rule is covered by unit and system tests, documented in
+`datasets/example.yaml`, and used by at least one real dataset; the GitHub
+Release for `v1.2.0` exists.
 
 ## Definition of done
 
