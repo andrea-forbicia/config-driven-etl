@@ -17,16 +17,16 @@ from config_driven_etl.extract import (
     scan_raw_csv,
 )
 from config_driven_etl.load import (
+    ParquetOutput,
     bigquery_table_id,
     ensure_table,
     load_parquet,
     parquet_row_count,
     processed_parquet_path,
-    verify_parquet,
     verify_table_rows,
-    write_parquet,
+    write_parquet_files,
 )
-from config_driven_etl.transform import transform
+from config_driven_etl.transform import output_schema, transform
 
 
 @dataclass(frozen=True)
@@ -80,8 +80,7 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
             f"{raw}: cannot read CSV: {error_reason(error)}"
         ) from error
     path = processed_parquet_path(data_dir, config.name)
-    write_parquet(valid, path)
-    verify_parquet(path, config, valid.height)
+    write_parquet_files([ParquetOutput(path, valid, output_schema(config))])
     return StageResult(
         rows_in=valid.height + rejected.height,
         rows_out=valid.height,

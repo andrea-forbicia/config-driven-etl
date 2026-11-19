@@ -2,8 +2,9 @@
 
 import os
 import tempfile
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
@@ -15,11 +16,19 @@ from google.cloud import bigquery
 from config_driven_etl.bq_schema import bigquery_schema
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.errors import error_reason
-from config_driven_etl.transform import output_schema
 
 
 class LoadError(Exception):
     """Output that could not be written or does not match what was sent."""
+
+
+@dataclass(frozen=True)
+class ParquetOutput:
+    """A frame to write as Parquet and the schema the file must have."""
+
+    destination: Path
+    frame: pl.DataFrame
+    schema: pl.Schema
 
 
 def processed_parquet_path(data_dir: Path, name: str) -> Path:
@@ -30,11 +39,45 @@ def processed_parquet_path(data_dir: Path, name: str) -> Path:
 def write_parquet(df: pl.DataFrame, destination: Path) -> None:
     """Write df to destination as snappy Parquet, replacing any old file.
 
-    The frame is written to a temporary file in the same directory and
-    renamed when complete, so a failed run never leaves a truncated file
-    or removes the previous output. Raises LoadError if it cannot be
-    written.
+    The single-file case of write_parquet_files, checked against the
+    schema of df. Raises LoadError if it cannot be written.
     """
+    write_parquet_files([ParquetOutput(destination, df, df.schema)])
+
+
+def write_parquet_files(outputs: Sequence[ParquetOutput]) -> None:
+    """Write each frame as snappy Parquet, replacing the previous files.
+
+    Every frame is written to a temporary file next to its destination
+    and verified against its schema and row count; only when all of
+    them pass are they renamed into place. A failed write or check
+    leaves every previous output untouched and no temporary file
+    behind; a failed rename leaves the earlier destinations already
+    replaced. Raises LoadError naming the destination that failed.
+    """
+    temps: list[Path] = []
+    try:
+        for output in outputs:
+            temp = _temp_path(output.destination)
+            temps.append(temp)
+            _write(output.frame, temp, output.destination)
+            _check_parquet(
+                temp, output.schema, output.frame.height, output.destination
+            )
+        # Each rename is atomic, the set is not: a failed rename, or a
+        # process killed between two, leaves outputs from different
+        # runs.
+        for temp, output in zip(temps, outputs, strict=True):
+            try:
+                temp.replace(output.destination)
+            except OSError as error:
+                raise _write_error(output.destination, error) from error
+    finally:
+        for temp in temps:
+            temp.unlink(missing_ok=True)
+
+
+def _temp_path(destination: Path) -> Path:
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
         # A unique name keeps two runs of the same dataset from colliding.
@@ -43,21 +86,21 @@ def write_parquet(df: pl.DataFrame, destination: Path) -> None:
             prefix=f".{destination.name}.",
             suffix=".part",
         )
-    except OSError as error:
-        raise _write_error(destination, error) from error
-    temp = Path(name)
-    try:
         # Polars opens the path itself, and Windows cannot replace an
         # open file.
         os.close(handle)
+    except OSError as error:
+        raise _write_error(destination, error) from error
+    return Path(name)
+
+
+def _write(df: pl.DataFrame, temp: Path, destination: Path) -> None:
+    try:
         # A synchronous write: sink_parquet can still create the file
-        # from a background thread after raising, past the cleanup below.
+        # from a background thread after raising, past the cleanup.
         df.write_parquet(temp, compression="snappy")
-        temp.replace(destination)
     except (OSError, pl.exceptions.PolarsError) as error:
         raise _write_error(destination, error) from error
-    finally:
-        temp.unlink(missing_ok=True)
 
 
 def _write_error(destination: Path, error: Exception) -> LoadError:
@@ -66,27 +109,32 @@ def _write_error(destination: Path, error: Exception) -> LoadError:
     )
 
 
-def verify_parquet(
-    path: Path, config: DatasetConfig, expected_rows: int
-) -> None:
+def verify_parquet(path: Path, schema: pl.Schema, expected_rows: int) -> None:
     """Re-read a written Parquet file and check its schema and row count.
 
-    The columns must be exactly those of output_schema, in config order
-    and with its dtypes. Raises LoadError listing every mismatch.
+    The columns must be exactly those of schema, in its order and with
+    its dtypes. Raises LoadError listing every mismatch.
     """
-    actual, rows = _read_footer(path)
-    problems = _schema_problems(config, actual)
+    _check_parquet(path, schema, expected_rows, path)
+
+
+def _check_parquet(
+    path: Path, schema: pl.Schema, expected_rows: int, label: Path
+) -> None:
+    """verify_parquet on path, reporting problems under label."""
+    actual, rows = _read_footer(path, label)
+    problems = _schema_problems(schema, actual)
     if rows != expected_rows:
         problems.append(f"{rows} rows written, expected {expected_rows}")
     if problems:
         raise LoadError(
-            "\n".join(f"{path}: {problem}" for problem in problems)
+            "\n".join(f"{label}: {problem}" for problem in problems)
         )
 
 
 def parquet_row_count(path: Path) -> int:
     """Return the number of rows in a Parquet file, from its footer."""
-    return _read_footer(path)[1]
+    return _read_footer(path, path)[1]
 
 
 def verify_table_rows(
@@ -115,21 +163,22 @@ def verify_table_rows(
     raise LoadError(message)
 
 
-def _read_footer(path: Path) -> tuple[dict[str, pl.DataType], int]:
+def _read_footer(
+    path: Path, label: Path
+) -> tuple[dict[str, pl.DataType], int]:
     try:
         # Both read only the file footer, not the data.
         schema = pl.read_parquet_schema(path)
         rows = pl.scan_parquet(path).select(pl.len()).collect().item()
     except (OSError, pl.exceptions.PolarsError) as error:
         reason = error_reason(error)
-        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
+        raise LoadError(f"{label}: cannot read Parquet: {reason}") from error
     return schema, rows
 
 
 def _schema_problems(
-    config: DatasetConfig, actual: Mapping[str, pl.DataType]
+    expected: pl.Schema, actual: Mapping[str, pl.DataType]
 ) -> list[str]:
-    expected = output_schema(config)
     problems = []
     for name, dtype in expected.items():
         if name not in actual:
@@ -145,7 +194,7 @@ def _schema_problems(
     ]
     # Only meaningful when the same columns are there.
     if not problems and list(actual) != list(expected):
-        problems.append("columns are not in config order")
+        problems.append("columns are not in the expected order")
     return problems
 
 
