@@ -12,6 +12,7 @@ from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 from google.auth.exceptions import RefreshError
 from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import TableSpec, table_spec
 from config_driven_etl.dataset_config import (
     DatasetConfig,
 )
@@ -512,6 +513,12 @@ def target_config(
     )
 
 
+def target_spec(
+    partition_by: str | None = "d", cluster_by: tuple[str, ...] = ("s",)
+) -> TableSpec:
+    return table_spec(target_config(partition_by, cluster_by))
+
+
 def fake_client() -> mock.MagicMock:
     return mock.create_autospec(bigquery.Client, instance=True)
 
@@ -550,7 +557,7 @@ class EnsureTableTest(unittest.TestCase):
     def test_creates_a_missing_table_from_the_config(self) -> None:
         self.client.get_table.side_effect = NotFound("missing")
 
-        ensure_table(self.client, TABLE_ID, target_config())
+        ensure_table(self.client, TABLE_ID, target_spec())
 
         table = self.created_table()
         self.assertEqual(table.reference.table_id, "sample")
@@ -573,7 +580,7 @@ class EnsureTableTest(unittest.TestCase):
         ensure_table(
             self.client,
             TABLE_ID,
-            target_config(partition_by=None, cluster_by=()),
+            target_spec(partition_by=None, cluster_by=()),
         )
 
         table = self.created_table()
@@ -583,7 +590,7 @@ class EnsureTableTest(unittest.TestCase):
     def test_keeps_a_matching_table(self) -> None:
         self.client.get_table.return_value = existing_table()
 
-        ensure_table(self.client, TABLE_ID, target_config())
+        ensure_table(self.client, TABLE_ID, target_spec())
 
         self.client.create_table.assert_not_called()
 
@@ -615,7 +622,7 @@ class EnsureTableTest(unittest.TestCase):
                 self.client.get_table.return_value = table
 
                 with self.assertRaises(LoadError) as context:
-                    ensure_table(self.client, TABLE_ID, target_config())
+                    ensure_table(self.client, TABLE_ID, target_spec())
 
                 self.assertEqual(
                     str(context.exception).splitlines(),
@@ -633,7 +640,7 @@ class EnsureTableTest(unittest.TestCase):
         self.client.get_table.return_value = table
 
         with self.assertRaises(LoadError) as context:
-            ensure_table(self.client, TABLE_ID, target_config())
+            ensure_table(self.client, TABLE_ID, target_spec())
 
         self.assertIn("partitioned by _PARTITIONTIME", str(context.exception))
 
@@ -641,7 +648,7 @@ class EnsureTableTest(unittest.TestCase):
         self.client.get_table.side_effect = Forbidden("access denied")
 
         with self.assertRaises(LoadError) as context:
-            ensure_table(self.client, TABLE_ID, target_config())
+            ensure_table(self.client, TABLE_ID, target_spec())
 
         self.assertEqual(
             str(context.exception),
@@ -657,7 +664,7 @@ class EnsureTableTest(unittest.TestCase):
                 self.client.get_table.side_effect = error
 
                 with self.assertRaises(LoadError) as context:
-                    ensure_table(self.client, TABLE_ID, target_config())
+                    ensure_table(self.client, TABLE_ID, target_spec())
 
                 self.assertEqual(
                     str(context.exception),
@@ -673,7 +680,7 @@ class EnsureTableTest(unittest.TestCase):
         )
 
         with self.assertRaises(LoadError) as context:
-            ensure_table(self.client, TABLE_ID, target_config())
+            ensure_table(self.client, TABLE_ID, target_spec())
 
         self.assertEqual(
             str(context.exception).splitlines(),
@@ -713,12 +720,12 @@ class LoadParquetTest(unittest.TestCase):
 
         self.client.load_table_from_file.side_effect = record
 
-        load_parquet(self.client, self.path, TABLE_ID, target_config())
+        load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         self.assertEqual(sent, [(b"parquet bytes", TABLE_ID)])
 
     def test_job_uses_explicit_schema_and_truncate(self) -> None:
-        load_parquet(self.client, self.path, TABLE_ID, target_config())
+        load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         job_config = self.job_config()
         self.assertEqual(
@@ -738,7 +745,7 @@ class LoadParquetTest(unittest.TestCase):
         )
 
     def test_job_repeats_partitioning_and_clustering(self) -> None:
-        load_parquet(self.client, self.path, TABLE_ID, target_config())
+        load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         job_config = self.job_config()
         partitioning = job_config.time_partitioning
@@ -747,16 +754,16 @@ class LoadParquetTest(unittest.TestCase):
         self.assertEqual(job_config.clustering_fields, ["s"])
 
     def test_job_without_partitioning_or_clustering(self) -> None:
-        config = target_config(partition_by=None, cluster_by=())
+        spec = target_spec(partition_by=None, cluster_by=())
 
-        load_parquet(self.client, self.path, TABLE_ID, config)
+        load_parquet(self.client, self.path, TABLE_ID, spec)
 
         job_config = self.job_config()
         self.assertIsNone(job_config.time_partitioning)
         self.assertIsNone(job_config.clustering_fields)
 
     def test_waits_for_the_job(self) -> None:
-        load_parquet(self.client, self.path, TABLE_ID, target_config())
+        load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         self.job.result.assert_called_once_with()
 
@@ -764,7 +771,7 @@ class LoadParquetTest(unittest.TestCase):
         self.job.result.side_effect = BadRequest("Error while reading data")
 
         with self.assertRaises(LoadError) as context:
-            load_parquet(self.client, self.path, TABLE_ID, target_config())
+            load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         self.assertEqual(
             str(context.exception),
@@ -775,7 +782,7 @@ class LoadParquetTest(unittest.TestCase):
         self.path.unlink()
 
         with self.assertRaises(LoadError) as context:
-            load_parquet(self.client, self.path, TABLE_ID, target_config())
+            load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         self.assertIn("cannot read file", str(context.exception))
         self.client.load_table_from_file.assert_not_called()

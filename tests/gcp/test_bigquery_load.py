@@ -12,6 +12,7 @@ import pytest
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import table_spec
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
@@ -99,10 +100,11 @@ class BigQueryLoadTest(unittest.TestCase):
                 path, table_id = self.write_fixture(name)
                 rows = parquet_row_count(path)
                 expected = pl.read_parquet(path)
+                spec = table_spec(config)
 
                 for _ in range(2):
-                    ensure_table(self.client, table_id, config)
-                    load_parquet(self.client, path, table_id, config)
+                    ensure_table(self.client, table_id, spec)
+                    load_parquet(self.client, path, table_id, spec)
                     verify_table_rows(self.client, table_id, rows)
 
                     # list_rows reads table data without a billed query.

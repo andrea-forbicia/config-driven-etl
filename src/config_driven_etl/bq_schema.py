@@ -1,4 +1,6 @@
-"""BigQuery schema derived from a dataset config."""
+"""BigQuery schema and table layout derived from a dataset config."""
+
+from dataclasses import dataclass
 
 from google.cloud import bigquery
 
@@ -14,6 +16,24 @@ BIGQUERY_TYPES: dict[ColumnType, str] = {
     ColumnType.DATE: "DATE",
     ColumnType.DATETIME: "DATETIME",
 }
+
+
+@dataclass(frozen=True)
+class TableSpec:
+    """What a BigQuery table must look like: schema and layout."""
+
+    schema: tuple[bigquery.SchemaField, ...]
+    partition_by: str | None
+    cluster_by: tuple[str, ...]
+
+
+def table_spec(config: DatasetConfig) -> TableSpec:
+    """The target table: config schema, partitioning and clustering."""
+    return TableSpec(
+        schema=tuple(bigquery_schema(config)),
+        partition_by=config.target.partition_by,
+        cluster_by=config.target.cluster_by,
+    )
 
 
 def bigquery_schema(config: DatasetConfig) -> list[bigquery.SchemaField]:

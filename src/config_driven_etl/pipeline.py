@@ -7,6 +7,7 @@ import polars as pl
 import requests
 from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import table_spec
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.errors import error_reason
 from config_driven_etl.extract import (
@@ -119,7 +120,8 @@ def load_dataset(
     path = processed_parquet_path(data_dir, config.name)
     rows = parquet_row_count(path)
     table_id = bigquery_table_id(client.project, dataset, config.target.table)
-    ensure_table(client, table_id, config)
-    load_parquet(client, path, table_id, config)
+    spec = table_spec(config)
+    ensure_table(client, table_id, spec)
+    load_parquet(client, path, table_id, spec)
     verify_table_rows(client, table_id, rows)
     return StageResult(rows_in=rows, rows_out=rows)
