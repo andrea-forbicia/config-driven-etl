@@ -12,7 +12,11 @@ from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 from google.auth.exceptions import RefreshError
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import TableSpec, table_spec
+from config_driven_etl.bq_schema import (
+    TableSpec,
+    rejected_table_spec,
+    table_spec,
+)
 from config_driven_etl.dataset_config import (
     DatasetConfig,
 )
@@ -633,6 +637,25 @@ class EnsureTableTest(unittest.TestCase):
                 )
                 self.client.create_table.assert_not_called()
 
+    def test_rejected_spec_rejects_a_partitioned_clustered_table(
+        self,
+    ) -> None:
+        self.client.get_table.return_value = existing_table()
+
+        with self.assertRaises(LoadError) as context:
+            ensure_table(
+                self.client, TABLE_ID, rejected_table_spec(target_config())
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{TABLE_ID}: partitioned by d, config says nothing",
+                f"{TABLE_ID}: clustered by ['s'], config says nothing",
+                f"{TABLE_ID}: delete the table to recreate it",
+            ],
+        )
+
     def test_ingestion_time_partitioning_is_a_mismatch(self) -> None:
         table = bigquery.Table(TABLE_ID)
         table.time_partitioning = bigquery.TimePartitioning()
@@ -743,6 +766,17 @@ class LoadParquetTest(unittest.TestCase):
                 bigquery.SchemaField("d", "DATE", mode="REQUIRED"),
             ],
         )
+
+    def test_job_reads_parquet_lists_as_repeated_fields(self) -> None:
+        for spec in (target_spec(), rejected_table_spec(target_config())):
+            with self.subTest(schema=[field.name for field in spec.schema]):
+                self.client.load_table_from_file.reset_mock()
+
+                load_parquet(self.client, self.path, TABLE_ID, spec)
+
+                options = self.job_config().parquet_options
+                assert options is not None
+                self.assertTrue(options.enable_list_inference)
 
     def test_job_repeats_partitioning_and_clustering(self) -> None:
         load_parquet(self.client, self.path, TABLE_ID, target_spec())

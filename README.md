@@ -31,7 +31,9 @@ flowchart LR
   Parquet, verified before they replace the previous run's.
 - **load**: replaces the BigQuery table data with a load job
   (`WRITE_TRUNCATE`). The schema, partitioning and clustering come from
-  the config; re-running gives the same table.
+  the config; re-running gives the same table. With
+  `target.rejected_table`, the rejected rows are loaded into their own
+  table the same way.
 
 Each stage logs one JSON line to stderr. Exit codes per error category are
 listed by `python -m config_driven_etl --help`.

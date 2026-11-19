@@ -12,7 +12,7 @@ import pytest
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import table_spec
+from config_driven_etl.bq_schema import rejected_table_spec, table_spec
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
@@ -21,12 +21,17 @@ from config_driven_etl.load import (
     load_parquet,
     parquet_row_count,
     processed_parquet_path,
+    rejected_parquet_path,
     verify_parquet,
     verify_table_rows,
     write_parquet,
 )
 from config_driven_etl.settings import Settings
-from config_driven_etl.transform import output_schema, transform
+from config_driven_etl.transform import (
+    output_schema,
+    rejected_schema,
+    transform,
+)
 from fixture_outcomes import OUTCOMES, fixture_config
 
 
@@ -87,11 +92,39 @@ class BigQueryLoadTest(unittest.TestCase):
         path = processed_parquet_path(self.data_dir, name)
         write_parquet(frame, path)
         verify_parquet(path, output_schema(config), frame.height)
+        return path, self.temporary_table(config.target.table)
+
+    def write_rejected(self, name: str, empty: bool = False) -> Path:
+        """Transform a fixture and write its rejected rows as Parquet."""
+        config = fixture_config(name)
+        source = config.source
+        assert source.path is not None
+        result = transform(scan_raw_csv(source.path, source), config)
+        frame = result.rejected.collect()
+        if empty:
+            frame = frame.head(0)
+        path = rejected_parquet_path(self.data_dir, name)
+        write_parquet(frame, path)
+        verify_parquet(path, rejected_schema(config), frame.height)
+        return path
+
+    def temporary_table(self, base: str) -> str:
+        """A new table id, deleted after the test."""
         # A unique name keeps concurrent runs and leftovers apart.
-        table = f"{config.target.table}_test_{uuid.uuid4().hex[:12]}"
+        table = f"{base}_test_{uuid.uuid4().hex[:12]}"
         table_id = bigquery_table_id(self.client.project, self.dataset, table)
         self.addCleanup(self.client.delete_table, table_id, not_found_ok=True)
-        return path, table_id
+        return table_id
+
+    def read_table(self, table_id: str) -> pl.DataFrame:
+        # list_rows reads table data without a billed query.
+        loaded = pl.from_arrow(
+            self.client.list_rows(table_id).to_arrow(
+                create_bqstorage_client=False
+            )
+        )
+        assert isinstance(loaded, pl.DataFrame)
+        return loaded
 
     def test_fixtures_load_and_reload_to_the_same_state(self) -> None:
         for name in OUTCOMES:
@@ -107,18 +140,45 @@ class BigQueryLoadTest(unittest.TestCase):
                     load_parquet(self.client, path, table_id, spec)
                     verify_table_rows(self.client, table_id, rows)
 
-                    # list_rows reads table data without a billed query.
-                    loaded = pl.from_arrow(
-                        self.client.list_rows(table_id).to_arrow(
-                            create_bqstorage_client=False
-                        )
-                    )
-                    assert isinstance(loaded, pl.DataFrame)
+                    loaded = self.read_table(table_id)
                     key = expected.columns[0]
                     self.assertTrue(
                         loaded.sort(key).equals(expected.sort(key)),
                         f"{loaded}\n!=\n{expected}",
                     )
+
+    def test_rejected_rows_load_and_reload_to_the_same_state(self) -> None:
+        for name in OUTCOMES:
+            with self.subTest(dataset=name):
+                spec = rejected_table_spec(fixture_config(name))
+                path = self.write_rejected(name)
+                table_id = self.temporary_table(f"{name}_rejected")
+                rows = parquet_row_count(path)
+                expected = pl.read_parquet(path).sort("row_number")
+                self.assertGreater(rows, 0)
+
+                for _ in range(2):
+                    ensure_table(self.client, table_id, spec)
+                    load_parquet(self.client, path, table_id, spec)
+                    verify_table_rows(self.client, table_id, rows)
+
+                    loaded = self.read_table(table_id).sort("row_number")
+                    self.assertTrue(
+                        loaded.equals(expected), f"{loaded}\n!=\n{expected}"
+                    )
+
+    def test_empty_rejected_file_empties_the_table(self) -> None:
+        name = "library_loans"
+        spec = rejected_table_spec(fixture_config(name))
+        table_id = self.temporary_table(f"{name}_rejected")
+        ensure_table(self.client, table_id, spec)
+        path = self.write_rejected(name)
+        load_parquet(self.client, path, table_id, spec)
+
+        path = self.write_rejected(name, empty=True)
+        load_parquet(self.client, path, table_id, spec)
+
+        verify_table_rows(self.client, table_id, 0)
 
 
 if __name__ == "__main__":

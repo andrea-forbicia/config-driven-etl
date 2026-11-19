@@ -7,7 +7,11 @@ import polars as pl
 import requests
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import table_spec
+from config_driven_etl.bq_schema import (
+    TableSpec,
+    rejected_table_spec,
+    table_spec,
+)
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.errors import error_reason
 from config_driven_etl.extract import (
@@ -18,6 +22,7 @@ from config_driven_etl.extract import (
     scan_raw_csv,
 )
 from config_driven_etl.load import (
+    LoadError,
     ParquetOutput,
     bigquery_table_id,
     ensure_table,
@@ -116,12 +121,48 @@ def load_dataset(
     client: bigquery.Client,
     dataset: str,
 ) -> StageResult:
-    """Load the processed Parquet into BigQuery and check the row count."""
+    """Load the processed Parquet into BigQuery and check the row count.
+
+    With target.rejected_table, the rejected rows are loaded next, into
+    their own table. Both files are read first, so a missing one fails
+    before either table changes.
+    """
     path = processed_parquet_path(data_dir, config.name)
     rows = parquet_row_count(path)
+    rejected_path = rejected_parquet_path(data_dir, config.name)
+    rejected_table = config.target.rejected_table
+    rejected_rows = (
+        None if rejected_table is None else parquet_row_count(rejected_path)
+    )
     table_id = bigquery_table_id(client.project, dataset, config.target.table)
-    spec = table_spec(config)
+    _load_table(client, path, table_id, table_spec(config), rows)
+    if rejected_table is not None and rejected_rows is not None:
+        rejected_id = bigquery_table_id(
+            client.project, dataset, rejected_table
+        )
+        try:
+            _load_table(
+                client,
+                rejected_path,
+                rejected_id,
+                rejected_table_spec(config),
+                rejected_rows,
+            )
+        except LoadError as error:
+            raise LoadError(
+                f"{error}\nrejected rows not loaded; {table_id} already "
+                "holds this run's valid rows"
+            ) from error
+    return StageResult(rows_in=rows, rows_out=rows)
+
+
+def _load_table(
+    client: bigquery.Client,
+    path: Path,
+    table_id: str,
+    spec: TableSpec,
+    rows: int,
+) -> None:
     ensure_table(client, table_id, spec)
     load_parquet(client, path, table_id, spec)
     verify_table_rows(client, table_id, rows)
-    return StageResult(rows_in=rows, rows_out=rows)

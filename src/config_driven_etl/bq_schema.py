@@ -36,6 +36,15 @@ def table_spec(config: DatasetConfig) -> TableSpec:
     )
 
 
+def rejected_table_spec(config: DatasetConfig) -> TableSpec:
+    """The rejected rows table: never partitioned or clustered."""
+    return TableSpec(
+        schema=tuple(bigquery_rejected_schema(config)),
+        partition_by=None,
+        cluster_by=(),
+    )
+
+
 def bigquery_schema(config: DatasetConfig) -> list[bigquery.SchemaField]:
     """One field per config column, in config order.
 
@@ -49,4 +58,23 @@ def bigquery_schema(config: DatasetConfig) -> list[bigquery.SchemaField]:
             mode="NULLABLE" if column.nullable else "REQUIRED",
         )
         for column in config.columns
+    ]
+
+
+def bigquery_rejected_schema(
+    config: DatasetConfig,
+) -> list[bigquery.SchemaField]:
+    """Fields of transform.rejected_schema, in the same order.
+
+    raw keeps every value as read, so its fields are STRING and NULLABLE
+    whatever the column's type and nullable rule.
+    """
+    raw = [
+        bigquery.SchemaField(column.name, "STRING", mode="NULLABLE")
+        for column in config.columns
+    ]
+    return [
+        bigquery.SchemaField("row_number", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("reasons", "STRING", mode="REPEATED"),
+        bigquery.SchemaField("raw", "RECORD", mode="REQUIRED", fields=raw),
     ]

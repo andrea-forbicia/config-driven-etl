@@ -144,7 +144,13 @@ target:
   write_mode: truncate
 
   # Table for the rejected rows, in the same BQ_DATASET. Must differ from
-  # table. Validated only for now: the load stage does not load it yet,
-  # so the rejected rows stay in
-  # data/processed/<name>/<name>.rejected.parquet. Optional.
+  # table. After the valid rows, the load stage loads
+  # data/processed/<name>/<name>.rejected.parquet into it, replacing its
+  # data on every run (empty when no row is rejected). Columns:
+  # row_number INT64, reasons ARRAY<STRING>, raw STRUCT with every column
+  # above as a STRING. Never partitioned or clustered. An existing table
+  # with this name is overwritten; removing this option leaves the table
+  # in BigQuery. If its load fails, the run fails, with the valid rows
+  # already loaded. Optional: without it, the rejected rows stay in the
+  # Parquet file only.
   rejected_table: city_weather_rejected

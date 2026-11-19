@@ -251,6 +251,10 @@ def load_parquet(
     BigQuery checks them against the table. Raises LoadError if the file
     cannot be read or the job fails.
     """
+    # Without list inference a Parquet list is read as a nested
+    # list.element record, which does not match a REPEATED field.
+    parquet_options = bigquery.ParquetOptions()
+    parquet_options.enable_list_inference = True
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.PARQUET,
         schema=list(spec.schema),
@@ -258,6 +262,7 @@ def load_parquet(
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
         time_partitioning=_time_partitioning(spec),
         clustering_fields=list(spec.cluster_by) or None,
+        parquet_options=parquet_options,
     )
     try:
         file = path.open("rb")

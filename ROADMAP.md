@@ -236,13 +236,13 @@ optional, so the phase is a MINOR change.
 - [x] Optional `target.rejected_table` in the config: a distinct
       identifier, never partitioned or clustered. Validated, documented in
       `datasets/example.yaml` `[feat]`
-- [ ] `load` stage: when `rejected_table` is set, load the rejected
+- [x] `load` stage: when `rejected_table` is set, load the rejected
       Parquet with `WRITE_TRUNCATE` and an explicit schema derived from
       the config (in `bq_schema.py`), and verify its row count. Decide
       first whether a failure of this second load fails the run `[feat]`
 - [ ] Log the rejected output path and table in the stage lines, extend
-      the system tests and the `gcp` test, and use `rejected_table` in at
-      least one real dataset `[test]`
+      the system tests (the `gcp` test already loads the rejected rows),
+      and use `rejected_table` in at least one real dataset `[test]`
 - [ ] Release `v1.3.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
 

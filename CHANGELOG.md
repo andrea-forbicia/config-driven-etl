@@ -17,6 +17,11 @@ and this project adheres to
   row was rejected) and `raw` (a struct with every mapped column as
   read, before any rule changed it). The file is written on every run,
   empty when no row is rejected.
+- Optional `target.rejected_table` in the dataset config. When set, the
+  `load` stage loads the rejected rows into that table after the valid
+  ones, with `WRITE_TRUNCATE`, a schema derived from the config
+  (`reasons` as `ARRAY<STRING>`, `raw` as a `STRUCT`) and a row count
+  check. A failure of this second load fails the run.
 
 ### Fixed
 
