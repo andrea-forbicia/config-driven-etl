@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- The processed Parquet file is now verified before it replaces the
+  previous output, so a file with the wrong schema or row count fails
+  the run and leaves the previous output in place.
+
 ## [1.2.1] - 2026-11-18
 
 ### Changed

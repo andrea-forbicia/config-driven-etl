@@ -18,6 +18,7 @@ from config_driven_etl.dataset_config import (
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
     LoadError,
+    ParquetOutput,
     bigquery_table_id,
     ensure_table,
     load_parquet,
@@ -26,8 +27,9 @@ from config_driven_etl.load import (
     verify_parquet,
     verify_table_rows,
     write_parquet,
+    write_parquet_files,
 )
-from config_driven_etl.transform import transform
+from config_driven_etl.transform import output_schema, transform
 from fixture_outcomes import OUTCOMES, fixture_config
 
 
@@ -188,6 +190,145 @@ def typed_config() -> DatasetConfig:
     )
 
 
+TYPED_SCHEMA = output_schema(typed_config())
+
+
+class WriteParquetFilesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.parent = Path(directory.name) / "processed" / "sample"
+        self.first = self.parent / "first.parquet"
+        self.second = self.parent / "second.parquet"
+
+    def outputs(
+        self, first: pl.DataFrame, second: pl.DataFrame
+    ) -> list[ParquetOutput]:
+        return [
+            ParquetOutput(self.first, first, first.schema),
+            ParquetOutput(self.second, second, second.schema),
+        ]
+
+    def write_previous_outputs(self) -> None:
+        write_parquet_files(
+            self.outputs(pl.DataFrame({"a": [1]}), pl.DataFrame({"b": [2]}))
+        )
+
+    def assert_previous_outputs_kept(self) -> None:
+        self.assertEqual(pl.read_parquet(self.first).rows(), [(1,)])
+        self.assertEqual(pl.read_parquet(self.second).rows(), [(2,)])
+        self.assertEqual(
+            sorted(self.parent.iterdir()), [self.first, self.second]
+        )
+
+    def test_writes_every_file(self) -> None:
+        typed = typed_frame().collect()
+        other = pl.DataFrame({"x": ["y"]})
+
+        write_parquet_files(self.outputs(typed, other))
+
+        self.assertTrue(pl.read_parquet(self.first).equals(typed))
+        self.assertTrue(pl.read_parquet(self.second).equals(other))
+
+    def test_uses_snappy_compression(self) -> None:
+        write_parquet_files(
+            self.outputs(typed_frame().collect(), pl.DataFrame({"x": [1]}))
+        )
+
+        for path in (self.first, self.second):
+            metadata = pq.ParquetFile(path).metadata
+            codecs = {
+                metadata.row_group(0).column(column).compression
+                for column in range(metadata.num_columns)
+            }
+            self.assertEqual(codecs, {"SNAPPY"}, path)
+
+    def test_replaces_the_previous_outputs(self) -> None:
+        self.write_previous_outputs()
+
+        write_parquet_files(
+            self.outputs(pl.DataFrame({"a": [3]}), pl.DataFrame({"b": [4]}))
+        )
+
+        self.assertEqual(pl.read_parquet(self.first).rows(), [(3,)])
+        self.assertEqual(pl.read_parquet(self.second).rows(), [(4,)])
+        self.assertEqual(
+            sorted(self.parent.iterdir()), [self.first, self.second]
+        )
+
+    def test_failed_verification_keeps_every_previous_output(self) -> None:
+        for failing in (0, 1):
+            with self.subTest(failing=failing):
+                self.write_previous_outputs()
+                outputs = self.outputs(
+                    pl.DataFrame({"a": [5]}), pl.DataFrame({"b": [6]})
+                )
+                bad = outputs[failing]
+                outputs[failing] = ParquetOutput(
+                    bad.destination, bad.frame, pl.Schema({"z": pl.Int64})
+                )
+
+                with self.assertRaises(LoadError) as context:
+                    write_parquet_files(outputs)
+
+                self.assertIn(
+                    f"{bad.destination}: missing column 'z'",
+                    str(context.exception),
+                )
+                self.assert_previous_outputs_kept()
+
+    def test_failed_write_keeps_every_previous_output(self) -> None:
+        self.write_previous_outputs()
+        # Parquet has no Object type, so Polars fails during the write.
+        unwritable = pl.DataFrame({"o": [object()]}, schema={"o": pl.Object})
+
+        with self.assertRaises(LoadError) as context:
+            write_parquet_files(
+                self.outputs(pl.DataFrame({"a": [5]}), unwritable)
+            )
+
+        self.assertIn(
+            f"{self.second}: cannot write Parquet", str(context.exception)
+        )
+        self.assert_previous_outputs_kept()
+
+    def test_failed_rename_leaves_no_temporary_file(self) -> None:
+        # A non-empty directory cannot be replaced by a file.
+        (self.second / "blocker").mkdir(parents=True)
+
+        with self.assertRaises(LoadError) as context:
+            write_parquet_files(
+                self.outputs(
+                    pl.DataFrame({"a": [1]}), pl.DataFrame({"b": [2]})
+                )
+            )
+
+        self.assertIn(
+            f"{self.second}: cannot write Parquet", str(context.exception)
+        )
+        self.assertFalse(list(self.parent.glob("*.part")))
+
+    def test_failed_first_run_leaves_no_file(self) -> None:
+        unwritable = pl.DataFrame({"o": [object()]}, schema={"o": pl.Object})
+
+        with self.assertRaises(LoadError):
+            write_parquet_files(
+                self.outputs(pl.DataFrame({"a": [1]}), unwritable)
+            )
+
+        self.assertEqual(list(self.parent.iterdir()), [])
+
+    def test_empty_frames_keep_their_schema(self) -> None:
+        empty = typed_frame().head(0).collect()
+
+        write_parquet_files(self.outputs(empty, empty))
+
+        for path in (self.first, self.second):
+            written = pl.read_parquet(path)
+            self.assertEqual(written.height, 0)
+            self.assertEqual(written.schema, TYPED_SCHEMA)
+
+
 class VerifyParquetTest(unittest.TestCase):
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
@@ -197,7 +338,7 @@ class VerifyParquetTest(unittest.TestCase):
     def problems(self, lf: pl.LazyFrame, expected_rows: int = 2) -> list[str]:
         write_parquet(lf.collect(), self.path)
         with self.assertRaises(LoadError) as context:
-            verify_parquet(self.path, typed_config(), expected_rows)
+            verify_parquet(self.path, TYPED_SCHEMA, expected_rows)
         prefix = f"{self.path}: "
         lines = str(context.exception).splitlines()
         self.assertTrue(all(line.startswith(prefix) for line in lines))
@@ -206,12 +347,12 @@ class VerifyParquetTest(unittest.TestCase):
     def test_accepts_matching_file(self) -> None:
         write_parquet(typed_frame().collect(), self.path)
 
-        verify_parquet(self.path, typed_config(), expected_rows=2)
+        verify_parquet(self.path, TYPED_SCHEMA, expected_rows=2)
 
     def test_accepts_empty_file(self) -> None:
         write_parquet(typed_frame().head(0).collect(), self.path)
 
-        verify_parquet(self.path, typed_config(), expected_rows=0)
+        verify_parquet(self.path, TYPED_SCHEMA, expected_rows=0)
 
     def test_row_count_mismatch(self) -> None:
         self.assertEqual(
@@ -235,7 +376,7 @@ class VerifyParquetTest(unittest.TestCase):
         lf = typed_frame().select("i", "s", "f", "b", "d", "t")
 
         self.assertEqual(
-            self.problems(lf), ["columns are not in config order"]
+            self.problems(lf), ["columns are not in the expected order"]
         )
 
     def test_unexpected_column(self) -> None:
@@ -257,7 +398,7 @@ class VerifyParquetTest(unittest.TestCase):
 
     def test_missing_file(self) -> None:
         with self.assertRaises(LoadError) as context:
-            verify_parquet(self.path, typed_config(), 0)
+            verify_parquet(self.path, TYPED_SCHEMA, 0)
 
         self.assertIn("cannot read Parquet", str(context.exception))
 
@@ -267,7 +408,7 @@ class VerifyParquetTest(unittest.TestCase):
             mock.patch.object(pl, "read_parquet_schema", side_effect=error),
             self.assertRaises(LoadError) as context,
         ):
-            verify_parquet(self.path, typed_config(), 0)
+            verify_parquet(self.path, TYPED_SCHEMA, 0)
 
         self.assertEqual(
             str(context.exception),
@@ -278,7 +419,7 @@ class VerifyParquetTest(unittest.TestCase):
         self.path.write_bytes(b"not a parquet file")
 
         with self.assertRaises(LoadError) as context:
-            verify_parquet(self.path, typed_config(), 0)
+            verify_parquet(self.path, TYPED_SCHEMA, 0)
 
         self.assertIn("cannot read Parquet", str(context.exception))
 
@@ -299,7 +440,7 @@ class FixtureParquetTest(unittest.TestCase):
 
                     write_parquet(valid, path)
 
-                    verify_parquet(path, config, valid.height)
+                    verify_parquet(path, output_schema(config), valid.height)
                     self.assertEqual(valid.height, outcome.rows_valid)
 
 

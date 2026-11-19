@@ -25,7 +25,7 @@ from config_driven_etl.load import (
     write_parquet,
 )
 from config_driven_etl.settings import Settings
-from config_driven_etl.transform import transform
+from config_driven_etl.transform import output_schema, transform
 from fixture_outcomes import OUTCOMES, fixture_config
 
 
@@ -85,7 +85,7 @@ class BigQueryLoadTest(unittest.TestCase):
         frame = recent_partitions(valid.valid.collect(), config)
         path = processed_parquet_path(self.data_dir, name)
         write_parquet(frame, path)
-        verify_parquet(path, config, frame.height)
+        verify_parquet(path, output_schema(config), frame.height)
         # A unique name keeps concurrent runs and leftovers apart.
         table = f"{config.target.table}_test_{uuid.uuid4().hex[:12]}"
         table_id = bigquery_table_id(self.client.project, self.dataset, table)
