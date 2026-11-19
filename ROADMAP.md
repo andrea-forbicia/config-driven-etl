@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: done — `v1.2.1` released**
+**Current phase: 11 — Rejected rows quarantine**
 
 How to use this plan:
 
@@ -214,6 +214,41 @@ than one check.
 Exit: pyright runs on every pull request; adding a fixture row changes its
 expected numbers in one place; the overlap rule is tested and documented;
 a failed Parquet write never leaves a temporary file behind.
+
+## Phase 11 — Rejected rows quarantine
+
+Goal: every rejected row can be inspected after a run, not only counted.
+Rejected rows are written next to the valid ones and, when the config asks
+for it, loaded into their own BigQuery table. The new config field is
+optional, so the phase is a MINOR change.
+
+- [ ] Keep each rejected row's raw source values: today a value that fails
+      its cast is already null in `TransformResult.rejected`, so the bad
+      value is lost. Decide first between carrying the raw strings through
+      the transform and re-joining them by row number; the valid rows and
+      the transform's purity must not change `[feat]`
+- [ ] Write the rejected rows to
+      `data/processed/<name>/rejected.parquet` in the `transform` stage:
+      every target column as `string`, plus `reasons` (list of strings)
+      and `row_number` in the source file. Replaced on every run, written
+      even when empty, verified like the valid output `[feat]`
+- [ ] Optional `target.rejected_table` in the config: a distinct
+      identifier, never partitioned or clustered. Validated, documented in
+      `datasets/example.yaml` `[feat]`
+- [ ] `load` stage: when `rejected_table` is set, load the rejected
+      Parquet with `WRITE_TRUNCATE` and an explicit schema derived from
+      the config (in `bq_schema.py`), and verify its row count. Decide
+      first whether a failure of this second load fails the run `[feat]`
+- [ ] Log the rejected output path and table in the stage lines, extend
+      the system tests and the `gcp` test, and use `rejected_table` in at
+      least one real dataset `[test]`
+- [ ] Release `v1.3.0`: version bump, `CHANGELOG.md` section, annotated
+      tag `[chore]`
+
+Exit: after `run`, each rejected row of both fixture datasets is in the
+rejected Parquet with its raw values and all its reasons; with
+`rejected_table` set, a second run leaves both tables in the same state;
+the GitHub Release for `v1.3.0` exists.
 
 ## Definition of done
 
