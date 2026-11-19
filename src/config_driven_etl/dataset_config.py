@@ -384,6 +384,7 @@ class Target(_StrictModel):
     cluster_by: tuple[Identifier, ...] = Field(default=(), max_length=4)
     # Only truncate keeps re-runs idempotent.
     write_mode: Literal["truncate"] = "truncate"
+    rejected_table: Identifier | None = None
 
 
 class DatasetConfig(_StrictModel):
@@ -450,6 +451,13 @@ class DatasetConfig(_StrictModel):
             for name in dict.fromkeys(self.target.cluster_by)
             if types.get(name) is ColumnType.FLOAT
         ]
+
+        # Both loads truncate, so a shared table would keep only one.
+        if self.target.rejected_table == self.target.table:
+            problems.append(
+                f"target.rejected_table: '{self.target.table}' is also "
+                "target.table"
+            )
 
         _raise_if_any(problems)
         return self

@@ -142,3 +142,11 @@ target:
   # input leaves the same table state. Only allowed value. Default:
   # truncate.
   write_mode: truncate
+
+  # Table for the rejected rows, in the same BQ_DATASET: row_number,
+  # reasons and raw, as in data/processed/<name>/<name>.rejected.parquet.
+  # Never partitioned or clustered; replaced on every run like table.
+  # Must differ from table. Another table with this name, from any
+  # dataset file, is overwritten; removing the option leaves the table in
+  # place. Optional; without it the rejected rows stay in Parquet only.
+  rejected_table: city_weather_rejected

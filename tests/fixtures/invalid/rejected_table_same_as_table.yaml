@@ -1,0 +1,11 @@
+# Invalid: the rejected rows would overwrite the valid ones.
+name: rejected_table_same_as_table
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+target:
+  table: loans
+  rejected_table: loans

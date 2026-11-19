@@ -233,7 +233,7 @@ optional, so the phase is a MINOR change.
       `reasons` (list of strings) and `raw`, a struct with every target
       column as `string`. Replaced on every run, written even when
       empty, verified like the valid output `[feat]`
-- [ ] Optional `target.rejected_table` in the config: a distinct
+- [x] Optional `target.rejected_table` in the config: a distinct
       identifier, never partitioned or clustered. Validated, documented in
       `datasets/example.yaml` `[feat]`
 - [ ] `load` stage: when `rejected_table` is set, load the rejected
