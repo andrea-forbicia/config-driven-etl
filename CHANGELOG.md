@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- The `transform` stage writes the rejected rows to
+  `data/processed/<name>/<name>.rejected.parquet`, next to the valid
+  ones: `row_number` (the record's position in the source file, the
+  first record after the header being 1), `reasons` (every reason the
+  row was rejected) and `raw` (a struct with every mapped column as
+  read, before any rule changed it). The file is written on every run,
+  empty when no row is rejected.
+
 ### Fixed
 
 - The processed Parquet file is now verified before it replaces the

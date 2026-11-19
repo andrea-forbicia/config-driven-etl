@@ -16,7 +16,7 @@ from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
 from config_driven_etl.cli import app
-from config_driven_etl.transform import output_schema
+from config_driven_etl.transform import output_schema, rejected_schema
 from fixture_outcomes import OUTCOMES, fixture_config, fixture_path
 
 
@@ -103,6 +103,15 @@ class RunCommandTest(unittest.TestCase):
         path = self.directory / "data" / "processed" / name / f"{name}.parquet"
         return pl.read_parquet(path)
 
+    def rejected(self, name: str) -> pl.DataFrame:
+        directory = self.directory / "data" / "processed" / name
+        return pl.read_parquet(directory / f"{name}.rejected.parquet")
+
+    def rejected_row(self, name: str, row_number: int) -> dict[str, Any]:
+        rows = self.rejected(name).filter(pl.col("row_number") == row_number)
+        (row,) = rows.rows(named=True)
+        return row
+
     def events(self, result: Result) -> list[dict[str, Any]]:
         return [json.loads(line) for line in result.stderr.splitlines()]
 
@@ -113,6 +122,9 @@ class RunCommandTest(unittest.TestCase):
         frame = self.parquet(name)
         self.assertEqual(frame.schema, output_schema(config))
         self.assertEqual(frame.height, outcome.rows_valid)
+        rejected = self.rejected(name)
+        self.assertEqual(rejected.schema, rejected_schema(config))
+        self.assertEqual(rejected.height, outcome.rows_rejected)
         transform = self.events(result)[1]
         self.assertEqual(
             (
@@ -140,6 +152,21 @@ class RunCommandTest(unittest.TestCase):
                 ("r011", "s5", datetime(2026, 1, 2, 3), None, 61, True),
             ],
         )
+        self.assertEqual(
+            self.rejected_row("sensor_readings", 7),
+            {
+                "row_number": 7,
+                "reasons": ["humidity_pct: invalid int"],
+                "raw": {
+                    "reading_id": "r007",
+                    "sensor_id": "s3",
+                    "measured_at": "2026-01-01T04:00:00",
+                    "temperature_c": "18.4",
+                    "humidity_pct": "abc",
+                    "is_online": "true",
+                },
+            },
+        )
         (job_config,) = self.bigquery.job_configs
         partitioning = job_config.time_partitioning
         assert partitioning is not None
@@ -157,17 +184,35 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(frame["title"].to_list()[2], "Caf� society")
         self.assertIsNone(frame["title"].to_list()[3])
         self.assertEqual(frame["loan_date"].to_list()[0], date(2026, 2, 3))
+        self.assertEqual(
+            self.rejected_row("library_loans", 6),
+            {
+                "row_number": 6,
+                "reasons": ["fine_eur: below min"],
+                "raw": {
+                    "loan_id": "1006",
+                    "branch_code": "031",
+                    "title": "Emma",
+                    "loan_date": "09/02/2026",
+                    "due_date": "23/02/2026",
+                    "fine_eur": "-1.00",
+                    "renewals": "0",
+                },
+            },
+        )
         (job_config,) = self.bigquery.job_configs
         self.assertIsNone(job_config.time_partitioning)
 
     def test_second_run_leaves_the_same_state(self) -> None:
         self.run_dataset("library_loans")
         first = self.parquet("library_loans")
+        first_rejected = self.rejected("library_loans")
         first_loaded = self.bigquery.data["project.dataset.library_loans"]
 
         self.run_dataset("library_loans")
 
         self.assertTrue(self.parquet("library_loans").equals(first))
+        self.assertTrue(self.rejected("library_loans").equals(first_rejected))
         self.assertTrue(
             self.bigquery.data["project.dataset.library_loans"].equals(
                 first_loaded

@@ -22,6 +22,7 @@ from config_driven_etl.transform import (
     keep_raw_values,
     output_schema,
     raw_column,
+    rejected_schema,
     select_columns,
     split_rejected,
     transform,
@@ -1349,7 +1350,7 @@ class TransformTest(unittest.TestCase):
         _, rejected, _ = self.collect()
 
         self.assertEqual(
-            rejected[REJECTIONS].to_list(),
+            rejected["reasons"].to_list(),
             [
                 ["id: invalid int"],
                 ["id: null"],
@@ -1377,7 +1378,9 @@ class TransformTest(unittest.TestCase):
         _, rejected, _ = self.collect()
 
         self.assertEqual(
-            rejected.drop(REJECTIONS).rows(),
+            rejected.select(
+                "row_number", pl.col("raw").struct.unnest()
+            ).rows(),
             [
                 (3, "x", "03/01/2026", "1"),
                 (4, None, "04/01/2026", "1"),
@@ -1390,18 +1393,7 @@ class TransformTest(unittest.TestCase):
     def test_rejected_rows_schema(self) -> None:
         _, rejected, _ = self.collect()
 
-        self.assertEqual(
-            rejected.schema,
-            pl.Schema(
-                {
-                    ROW_NUMBER: pl.Int64,
-                    "id": pl.String,
-                    "day": pl.String,
-                    "score": pl.String,
-                    REJECTIONS: pl.List(pl.String),
-                }
-            ),
-        )
+        self.assertEqual(rejected.schema, rejected_schema(self.config))
 
     def test_rejected_values_are_not_trimmed_or_nullified(self) -> None:
         config = typed_config(
@@ -1411,8 +1403,29 @@ class TransformTest(unittest.TestCase):
 
         rejected = transform(raw, config).rejected.collect()
 
-        self.assertEqual(rejected["a"].to_list(), ["N/A", " x ", "  "])
-        self.assertEqual(rejected[ROW_NUMBER].to_list(), [1, 2, 3])
+        self.assertEqual(
+            rejected["raw"].struct.field("a").to_list(), ["N/A", " x ", "  "]
+        )
+        self.assertEqual(rejected["row_number"].to_list(), [1, 2, 3])
+
+    def test_target_names_may_match_rejected_columns(self) -> None:
+        config = typed_config(
+            {"row_number": "int", "reasons": "string", "raw": "string"}
+        )
+        raw = raw_frame({"row_number": ["x"], "reasons": ["r"], "raw": ["w"]})
+
+        rejected = transform(raw, config).rejected.collect()
+
+        self.assertEqual(
+            rejected.rows(named=True),
+            [
+                {
+                    "row_number": 1,
+                    "reasons": ["row_number: invalid int"],
+                    "raw": {"row_number": "x", "reasons": "r", "raw": "w"},
+                }
+            ],
+        )
 
     def test_every_input_row_is_valid_or_rejected(self) -> None:
         valid, rejected, _ = self.collect()
@@ -1429,9 +1442,7 @@ class TransformTest(unittest.TestCase):
         valid, rejected, counts = self.collect()
 
         self.assertEqual(valid.columns, ["id", "day", "score"])
-        self.assertEqual(
-            rejected.columns, [ROW_NUMBER, "id", "day", "score", REJECTIONS]
-        )
+        self.assertEqual(rejected.schema, rejected_schema(self.config))
         self.assertEqual(
             (valid.height, rejected.height, counts.height), (0, 0, 0)
         )
@@ -1527,7 +1538,7 @@ class TransformTest(unittest.TestCase):
         result = transform(raw_frame({"c": ["ab", "CD", "AB"]}), config)
 
         self.assertEqual(
-            result.rejected.collect()[REJECTIONS].to_list(),
+            result.rejected.collect()["reasons"].to_list(),
             [["c: no pattern match"], ["c: not allowed"]],
         )
 
@@ -1587,6 +1598,32 @@ class OutputSchemaTest(unittest.TestCase):
         result = transform(lf, config)
 
         self.assertEqual(result.valid.collect_schema(), output_schema(config))
+
+
+class RejectedSchemaTest(unittest.TestCase):
+    TYPES = OutputSchemaTest.TYPES
+
+    def test_metadata_then_raw_strings_in_config_order(self) -> None:
+        self.assertEqual(
+            rejected_schema(typed_config(self.TYPES)),
+            pl.Schema(
+                {
+                    "row_number": pl.Int64,
+                    "reasons": pl.List(pl.String),
+                    "raw": pl.Struct(dict.fromkeys(self.TYPES, pl.String)),
+                }
+            ),
+        )
+
+    def test_matches_what_transform_produces(self) -> None:
+        config = typed_config(self.TYPES)
+        lf = raw_frame(dict.fromkeys(self.TYPES, ["bad"]))
+
+        result = transform(lf, config)
+
+        self.assertEqual(
+            result.rejected.collect_schema(), rejected_schema(config)
+        )
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ flowchart LR
     csv[(CSV source<br>URL or file)] --> extract
     extract --> raw[(data/raw/name/)]
     raw --> transform
-    transform --> parquet[(data/processed/name/<br>Parquet)]
+    transform --> parquet[(data/processed/name/<br>valid and rejected Parquet)]
     transform --> log[JSON log:<br>rows in, out, rejected]
     parquet --> load
     load --> bq[(BigQuery table)]
@@ -26,9 +26,12 @@ flowchart LR
   columns, turn `null_values` sentinels into null, cast types, then the
   `nullable`, `min` / `max`, `allowed_values`, `pattern` and
   `deduplicate_on` rules. Rejected rows are counted per reason and logged.
-- **load**: writes snappy Parquet, verifies it, then replaces the BigQuery
-  table data with a load job (`WRITE_TRUNCATE`). The schema, partitioning
-  and clustering come from the config; re-running gives the same table.
+  Valid rows go to `<name>.parquet`; rejected rows, with their row number,
+  reasons and raw values, to `<name>.rejected.parquet`. Both are snappy
+  Parquet, verified before they replace the previous run's.
+- **load**: replaces the BigQuery table data with a load job
+  (`WRITE_TRUNCATE`). The schema, partitioning and clustering come from
+  the config; re-running gives the same table.
 
 Each stage logs one JSON line to stderr. Exit codes per error category are
 listed by `python -m config_driven_etl --help`.

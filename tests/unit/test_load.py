@@ -24,6 +24,7 @@ from config_driven_etl.load import (
     load_parquet,
     parquet_row_count,
     processed_parquet_path,
+    rejected_parquet_path,
     verify_parquet,
     verify_table_rows,
     write_parquet,
@@ -59,6 +60,18 @@ class ProcessedParquetPathTest(unittest.TestCase):
         self.assertEqual(
             processed_parquet_path(Path("data"), "sample"),
             Path("data") / "processed" / "sample" / "sample.parquet",
+        )
+
+    def test_rejected_path_next_to_the_processed_file(self) -> None:
+        self.assertEqual(
+            rejected_parquet_path(Path("data"), "sample"),
+            Path("data") / "processed" / "sample" / "sample.rejected.parquet",
+        )
+
+    def test_a_dataset_named_rejected_keeps_two_paths(self) -> None:
+        self.assertNotEqual(
+            rejected_parquet_path(Path("data"), "rejected"),
+            processed_parquet_path(Path("data"), "rejected"),
         )
 
 
@@ -382,6 +395,28 @@ class VerifyParquetTest(unittest.TestCase):
         self.assertEqual(
             self.problems(lf), ["columns are not in the expected order"]
         )
+
+    def test_accepts_nested_columns(self) -> None:
+        frame = pl.DataFrame(
+            {"l": [["a"]], "r": [{"x": "1", "y": None}]},
+            schema={
+                "l": pl.List(pl.String),
+                "r": pl.Struct({"x": pl.String, "y": pl.String}),
+            },
+        )
+        write_parquet(frame, self.path)
+
+        verify_parquet(self.path, frame.schema, expected_rows=1)
+
+    def test_wrong_struct_field_dtype(self) -> None:
+        frame = pl.DataFrame({"r": [{"x": 1}]})
+        write_parquet(frame, self.path)
+        expected = pl.Schema({"r": pl.Struct({"x": pl.String})})
+
+        with self.assertRaises(LoadError) as context:
+            verify_parquet(self.path, expected, expected_rows=1)
+
+        self.assertIn("column 'r' is Struct", str(context.exception))
 
     def test_unexpected_column(self) -> None:
         lf = typed_frame().with_columns(pl.lit("x").alias("Extra"))

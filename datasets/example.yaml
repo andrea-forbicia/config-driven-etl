@@ -75,7 +75,9 @@ source:
 #             many regex characters are special in plain YAML. Nulls are
 #             left to nullable; allowed_values entries must match it.
 #             Optional, not empty.
-# Rejected rows are counted and logged, never silently dropped.
+# Rejected rows are counted and logged, never silently dropped: each one is
+# written with its row number, reasons and raw values to
+# data/processed/<name>/<name>.rejected.parquet.
 columns:
   - source: "Date"
     name: observation_date

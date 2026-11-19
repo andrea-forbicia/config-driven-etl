@@ -11,13 +11,18 @@ from google.cloud import bigquery
 
 from config_driven_etl.dataset_config import load_dataset_config
 from config_driven_etl.extract import ExtractError, raw_csv_path
-from config_driven_etl.load import LoadError, processed_parquet_path
+from config_driven_etl.load import (
+    LoadError,
+    processed_parquet_path,
+    rejected_parquet_path,
+)
 from config_driven_etl.pipeline import (
     StageResult,
     extract_dataset,
     load_dataset,
     transform_dataset,
 )
+from config_driven_etl.transform import rejected_schema
 from fixture_outcomes import FIXTURES, OUTCOMES, fixture_config
 
 LOANS = OUTCOMES["library_loans"]
@@ -120,6 +125,32 @@ class TransformDatasetTest(PipelineTestCase):
                 self.assertEqual(
                     pl.read_parquet(path).height, outcome.rows_valid
                 )
+                rejected = pl.read_parquet(
+                    rejected_parquet_path(self.data_dir, config.name)
+                )
+                self.assertEqual(rejected.height, outcome.rows_rejected)
+                self.assertEqual(rejected.schema, rejected_schema(config))
+
+    def test_no_rejected_rows_writes_an_empty_rejected_file(self) -> None:
+        config = fixture_config("library_loans")
+        source = config.source
+        assert source.path is not None
+        # Bytes, so the copy keeps the fixture's encoding.
+        header, first, *_ = source.path.read_bytes().split(b"\n")
+        clean = self.data_dir / "clean.csv"
+        clean.write_bytes(header + b"\n" + first + b"\n")
+        config = config.model_copy(
+            update={"source": source.model_copy(update={"path": clean})}
+        )
+        extract_dataset(config, self.data_dir, self.session)
+
+        result = transform_dataset(config, self.data_dir)
+
+        rejected = pl.read_parquet(
+            rejected_parquet_path(self.data_dir, config.name)
+        )
+        self.assertEqual((result.rows_out, rejected.height), (1, 0))
+        self.assertEqual(rejected.schema, rejected_schema(config))
 
     def test_output_off_its_config_keeps_the_previous_output(self) -> None:
         config = fixture_config("library_loans")
@@ -142,7 +173,10 @@ class TransformDatasetTest(PipelineTestCase):
             f"{path}: missing column 'extra'", str(context.exception)
         )
         self.assertTrue(pl.read_parquet(path).equals(previous))
-        self.assertEqual(list(path.parent.iterdir()), [path])
+        self.assertEqual(
+            sorted(path.parent.iterdir()),
+            [path, rejected_parquet_path(self.data_dir, config.name)],
+        )
 
     def test_missing_raw_file_is_an_extract_error(self) -> None:
         with self.assertRaises(ExtractError):
