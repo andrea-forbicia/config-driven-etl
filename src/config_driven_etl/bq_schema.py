@@ -1,4 +1,6 @@
-"""BigQuery schema derived from a dataset config."""
+"""BigQuery schema and table layout derived from a dataset config."""
+
+from dataclasses import dataclass
 
 from google.cloud import bigquery
 
@@ -16,6 +18,33 @@ BIGQUERY_TYPES: dict[ColumnType, str] = {
 }
 
 
+@dataclass(frozen=True)
+class TableSpec:
+    """What a BigQuery table must look like: schema and layout."""
+
+    schema: tuple[bigquery.SchemaField, ...]
+    partition_by: str | None
+    cluster_by: tuple[str, ...]
+
+
+def table_spec(config: DatasetConfig) -> TableSpec:
+    """The target table: config schema, partitioning and clustering."""
+    return TableSpec(
+        schema=tuple(bigquery_schema(config)),
+        partition_by=config.target.partition_by,
+        cluster_by=config.target.cluster_by,
+    )
+
+
+def rejected_table_spec(config: DatasetConfig) -> TableSpec:
+    """The rejected rows table: never partitioned or clustered."""
+    return TableSpec(
+        schema=tuple(bigquery_rejected_schema(config)),
+        partition_by=None,
+        cluster_by=(),
+    )
+
+
 def bigquery_schema(config: DatasetConfig) -> list[bigquery.SchemaField]:
     """One field per config column, in config order.
 
@@ -29,4 +58,23 @@ def bigquery_schema(config: DatasetConfig) -> list[bigquery.SchemaField]:
             mode="NULLABLE" if column.nullable else "REQUIRED",
         )
         for column in config.columns
+    ]
+
+
+def bigquery_rejected_schema(
+    config: DatasetConfig,
+) -> list[bigquery.SchemaField]:
+    """Fields of transform.rejected_schema, in the same order.
+
+    raw keeps every value as read, so its fields are STRING and NULLABLE
+    whatever the column's type and nullable rule.
+    """
+    raw = [
+        bigquery.SchemaField(column.name, "STRING", mode="NULLABLE")
+        for column in config.columns
+    ]
+    return [
+        bigquery.SchemaField("row_number", "INT64", mode="REQUIRED"),
+        bigquery.SchemaField("reasons", "STRING", mode="REPEATED"),
+        bigquery.SchemaField("raw", "RECORD", mode="REQUIRED", fields=raw),
     ]

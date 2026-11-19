@@ -13,8 +13,7 @@ from google.api_core.exceptions import GoogleAPIError, NotFound
 from google.auth.exceptions import GoogleAuthError
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import bigquery_schema
-from config_driven_etl.dataset_config import DatasetConfig
+from config_driven_etl.bq_schema import TableSpec
 from config_driven_etl.errors import error_reason
 
 
@@ -210,27 +209,27 @@ def bigquery_table_id(project: str, dataset: str, table: str) -> str:
 
 
 def ensure_table(
-    client: bigquery.Client, table_id: str, config: DatasetConfig
+    client: bigquery.Client, table_id: str, spec: TableSpec
 ) -> None:
-    """Create the target table if it does not exist yet.
+    """Create the table if it does not exist yet.
 
-    A new table gets the config's schema, day partitioning on
-    target.partition_by and clustering on target.cluster_by. An existing
-    table keeps its schema, which each load replaces, but BigQuery cannot
-    change its partitioning or clustering, so a mismatch raises LoadError.
+    A new table gets the spec's schema, day partitioning on partition_by
+    and clustering on cluster_by. An existing table keeps its schema,
+    which each load replaces, but BigQuery cannot change its partitioning
+    or clustering, so a mismatch raises LoadError.
     """
     with _bigquery_errors(table_id):
         try:
             existing = client.get_table(table_id)
         except NotFound:
-            table = bigquery.Table(table_id, schema=bigquery_schema(config))
-            table.time_partitioning = _time_partitioning(config)
-            table.clustering_fields = list(config.target.cluster_by) or None
+            table = bigquery.Table(table_id, schema=list(spec.schema))
+            table.time_partitioning = _time_partitioning(spec)
+            table.clustering_fields = list(spec.cluster_by) or None
             # Another run may create it between the two calls.
             client.create_table(table, exists_ok=True)
             return
 
-    problems = _layout_problems(existing, config)
+    problems = _layout_problems(existing, spec)
     if problems:
         raise LoadError(
             "\n".join(f"{table_id}: {problem}" for problem in problems)
@@ -242,23 +241,28 @@ def load_parquet(
     client: bigquery.Client,
     path: Path,
     table_id: str,
-    config: DatasetConfig,
+    spec: TableSpec,
 ) -> None:
     """Replace the table's data with a Parquet file and wait for the job.
 
-    The load job uses the schema from the config, never autodetection,
+    The load job uses the schema from the spec, never autodetection,
     and WRITE_TRUNCATE, so re-running the same file leaves the same table
     state. Partitioning and clustering are repeated on the job because
     BigQuery checks them against the table. Raises LoadError if the file
     cannot be read or the job fails.
     """
+    # Without list inference a Parquet list is read as a nested
+    # list.element record, which does not match a REPEATED field.
+    parquet_options = bigquery.ParquetOptions()
+    parquet_options.enable_list_inference = True
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.PARQUET,
-        schema=bigquery_schema(config),
+        schema=list(spec.schema),
         autodetect=False,
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        time_partitioning=_time_partitioning(config),
-        clustering_fields=list(config.target.cluster_by) or None,
+        time_partitioning=_time_partitioning(spec),
+        clustering_fields=list(spec.cluster_by) or None,
+        parquet_options=parquet_options,
     )
     try:
         file = path.open("rb")
@@ -273,9 +277,9 @@ def load_parquet(
 
 
 def _time_partitioning(
-    config: DatasetConfig,
+    spec: TableSpec,
 ) -> bigquery.TimePartitioning | None:
-    field = config.target.partition_by
+    field = spec.partition_by
     if field is None:
         return None
     return bigquery.TimePartitioning(
@@ -283,9 +287,7 @@ def _time_partitioning(
     )
 
 
-def _layout_problems(
-    table: bigquery.Table, config: DatasetConfig
-) -> list[str]:
+def _layout_problems(table: bigquery.Table, spec: TableSpec) -> list[str]:
     problems = []
     partitioning = table.time_partitioning
     if table.range_partitioning is not None:
@@ -297,17 +299,17 @@ def _layout_problems(
         actual = partitioning.field or "_PARTITIONTIME"
         if partitioning.type_ != bigquery.TimePartitioningType.DAY:
             actual = f"{actual} ({partitioning.type_})"
-    expected = config.target.partition_by
+    expected = spec.partition_by
     if actual != expected:
         problems.append(
             f"partitioned by {actual or 'nothing'}, "
             f"config says {expected or 'nothing'}"
         )
     clustering = list(table.clustering_fields or [])
-    if clustering != list(config.target.cluster_by):
+    if clustering != list(spec.cluster_by):
         problems.append(
             f"clustered by {clustering or 'nothing'}, "
-            f"config says {list(config.target.cluster_by) or 'nothing'}"
+            f"config says {list(spec.cluster_by) or 'nothing'}"
         )
     return problems
 

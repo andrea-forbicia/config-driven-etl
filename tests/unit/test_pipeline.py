@@ -6,10 +6,14 @@ from unittest import mock
 
 import polars as pl
 import requests
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import BadRequest, NotFound
 from google.cloud import bigquery
 
-from config_driven_etl.dataset_config import load_dataset_config
+from config_driven_etl.bq_schema import bigquery_rejected_schema
+from config_driven_etl.dataset_config import (
+    DatasetConfig,
+    load_dataset_config,
+)
 from config_driven_etl.extract import ExtractError, raw_csv_path
 from config_driven_etl.load import (
     LoadError,
@@ -28,15 +32,37 @@ from fixture_outcomes import FIXTURES, OUTCOMES, fixture_config
 LOANS = OUTCOMES["library_loans"]
 
 
-def fake_client(table_rows: int) -> mock.MagicMock:
-    """A client whose table is missing, then holds table_rows rows."""
+VALID_TABLE = "project.dataset.library_loans"
+REJECTED_TABLE = "project.dataset.library_loans_rejected"
+NOT_LOADED = (
+    f"rejected rows not loaded; {VALID_TABLE} already holds this run's "
+    "valid rows"
+)
+
+
+def fake_client(*table_rows: int) -> mock.MagicMock:
+    """A client whose tables, in load order, are missing, then hold rows.
+
+    ensure_table finds every table missing, then verify_table_rows finds
+    table_rows rows in each.
+    """
     client = mock.create_autospec(bigquery.Client, instance=True)
     client.project = "project"
-    table = mock.create_autospec(bigquery.Table, instance=True)
-    table.num_rows = table_rows
-    table.time_partitioning = None
-    client.get_table.side_effect = [NotFound("no table yet"), table]
+    answers: list[object] = [NotFound("no table yet") for _ in table_rows]
+    for rows in table_rows:
+        table = mock.create_autospec(bigquery.Table, instance=True)
+        table.num_rows = rows
+        table.time_partitioning = None
+        answers.append(table)
+    client.get_table.side_effect = answers
     return client
+
+
+def with_rejected_table(config: DatasetConfig) -> DatasetConfig:
+    target = config.target.model_copy(
+        update={"rejected_table": "library_loans_rejected"}
+    )
+    return config.model_copy(update={"target": target})
 
 
 class PipelineTestCase(unittest.TestCase):
@@ -190,8 +216,13 @@ class LoadDatasetTest(PipelineTestCase):
         extract_dataset(self.config, self.data_dir, self.session)
         transform_dataset(self.config, self.data_dir)
 
+    def loaded_tables(self, client: mock.MagicMock) -> list[str]:
+        return [
+            args[1] for args, _ in client.load_table_from_file.call_args_list
+        ]
+
     def test_loads_the_parquet_into_the_target_table(self) -> None:
-        client = fake_client(table_rows=LOANS.rows_valid)
+        client = fake_client(LOANS.rows_valid)
 
         result = load_dataset(self.config, self.data_dir, client, "dataset")
 
@@ -199,12 +230,132 @@ class LoadDatasetTest(PipelineTestCase):
             result,
             StageResult(rows_in=LOANS.rows_valid, rows_out=LOANS.rows_valid),
         )
-        args, _ = client.load_table_from_file.call_args
-        self.assertEqual(args[1], "project.dataset.library_loans")
+        self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
+
+    def test_without_rejected_table_the_rejected_file_is_unused(
+        self,
+    ) -> None:
+        rejected_parquet_path(self.data_dir, self.config.name).unlink()
+        client = fake_client(LOANS.rows_valid)
+
+        load_dataset(self.config, self.data_dir, client, "dataset")
+
+        self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
+
+    def test_loads_the_rejected_rows_after_the_valid_ones(self) -> None:
+        config = with_rejected_table(self.config)
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+
+        result = load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            result,
+            StageResult(rows_in=LOANS.rows_valid, rows_out=LOANS.rows_valid),
+        )
+        self.assertEqual(
+            self.loaded_tables(client), [VALID_TABLE, REJECTED_TABLE]
+        )
+        _, kwargs = client.load_table_from_file.call_args
+        self.assertEqual(
+            kwargs["job_config"].schema, bigquery_rejected_schema(config)
+        )
+        self.assertEqual(
+            [args[0] for args, _ in client.get_table.call_args_list],
+            [VALID_TABLE, REJECTED_TABLE, VALID_TABLE, REJECTED_TABLE],
+        )
+
+    def test_failed_rejected_load_says_the_valid_rows_are_loaded(
+        self,
+    ) -> None:
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+        valid_job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        rejected_job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        rejected_job.result.side_effect = BadRequest("bad rejected rows")
+        client.load_table_from_file.side_effect = [valid_job, rejected_job]
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(
+                with_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{REJECTED_TABLE}: BigQuery error: 400 bad rejected rows",
+                NOT_LOADED,
+            ],
+        )
+        valid_job.result.assert_called_once_with()
+
+    def test_rejected_row_count_mismatch_fails(self) -> None:
+        loaded = LOANS.rows_rejected - 1
+        client = fake_client(LOANS.rows_valid, loaded)
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(
+                with_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{REJECTED_TABLE}: {loaded} rows loaded, "
+                f"expected {LOANS.rows_rejected}",
+                NOT_LOADED,
+            ],
+        )
+
+    def test_rejected_table_layout_is_checked_before_any_load(self) -> None:
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+        partitioned = mock.create_autospec(bigquery.Table, instance=True)
+        partitioned.time_partitioning = bigquery.TimePartitioning(field="x")
+        partitioned.range_partitioning = None
+        partitioned.clustering_fields = None
+        client.get_table.side_effect = [NotFound("no table yet"), partitioned]
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(
+                with_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{REJECTED_TABLE}: partitioned by x, config says nothing",
+                f"{REJECTED_TABLE}: delete the table to recreate it",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
+
+    def test_missing_rejected_file_fails_before_any_load(self) -> None:
+        path = rejected_parquet_path(self.data_dir, self.config.name)
+        path.unlink()
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(
+                with_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
+
+        self.assertIn(f"{path}: cannot read Parquet", str(context.exception))
+        client.get_table.assert_not_called()
+        client.load_table_from_file.assert_not_called()
 
     def test_row_count_mismatch_fails(self) -> None:
         loaded = LOANS.rows_valid - 1
-        client = fake_client(table_rows=loaded)
+        client = fake_client(loaded)
 
         with self.assertRaisesRegex(
             LoadError, f"{loaded} rows loaded, expected {LOANS.rows_valid}"

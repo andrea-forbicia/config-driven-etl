@@ -7,6 +7,11 @@ import polars as pl
 import requests
 from google.cloud import bigquery
 
+from config_driven_etl.bq_schema import (
+    TableSpec,
+    rejected_table_spec,
+    table_spec,
+)
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.errors import error_reason
 from config_driven_etl.extract import (
@@ -17,6 +22,7 @@ from config_driven_etl.extract import (
     scan_raw_csv,
 )
 from config_driven_etl.load import (
+    LoadError,
     ParquetOutput,
     bigquery_table_id,
     ensure_table,
@@ -115,11 +121,58 @@ def load_dataset(
     client: bigquery.Client,
     dataset: str,
 ) -> StageResult:
-    """Load the processed Parquet into BigQuery and check the row count."""
+    """Load the processed Parquet into BigQuery and check the row count.
+
+    With target.rejected_table, the rejected rows are loaded next, into
+    their own table. Both files are read and both table layouts checked
+    first, so those failures leave both tables unchanged.
+    """
     path = processed_parquet_path(data_dir, config.name)
-    rows = parquet_row_count(path)
-    table_id = bigquery_table_id(client.project, dataset, config.target.table)
-    ensure_table(client, table_id, config)
-    load_parquet(client, path, table_id, config)
-    verify_table_rows(client, table_id, rows)
-    return StageResult(rows_in=rows, rows_out=rows)
+    valid = _TableLoad(
+        path=path,
+        rows=parquet_row_count(path),
+        table_id=bigquery_table_id(
+            client.project, dataset, config.target.table
+        ),
+        spec=table_spec(config),
+    )
+    rejected = None
+    if config.target.rejected_table is not None:
+        path = rejected_parquet_path(data_dir, config.name)
+        rejected = _TableLoad(
+            path=path,
+            rows=parquet_row_count(path),
+            table_id=bigquery_table_id(
+                client.project, dataset, config.target.rejected_table
+            ),
+            spec=rejected_table_spec(config),
+        )
+
+    for load in (valid, rejected):
+        if load is not None:
+            ensure_table(client, load.table_id, load.spec)
+    _load_and_verify(client, valid)
+    if rejected is not None:
+        try:
+            _load_and_verify(client, rejected)
+        except LoadError as error:
+            raise LoadError(
+                f"{error}\nrejected rows not loaded; {valid.table_id} "
+                "already holds this run's valid rows"
+            ) from error
+    return StageResult(rows_in=valid.rows, rows_out=valid.rows)
+
+
+@dataclass(frozen=True)
+class _TableLoad:
+    """A Parquet file, its row count and the table it is loaded into."""
+
+    path: Path
+    rows: int
+    table_id: str
+    spec: TableSpec
+
+
+def _load_and_verify(client: bigquery.Client, load: _TableLoad) -> None:
+    load_parquet(client, load.path, load.table_id, load.spec)
+    verify_table_rows(client, load.table_id, load.rows)

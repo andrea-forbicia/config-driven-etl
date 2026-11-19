@@ -1,10 +1,27 @@
 import unittest
+from pathlib import Path
 from typing import Any
 
+import polars as pl
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import BIGQUERY_TYPES, bigquery_schema
-from config_driven_etl.dataset_config import ColumnType, DatasetConfig
+from config_driven_etl.bq_schema import (
+    BIGQUERY_TYPES,
+    TableSpec,
+    bigquery_rejected_schema,
+    bigquery_schema,
+    rejected_table_spec,
+    table_spec,
+)
+from config_driven_etl.dataset_config import (
+    ColumnType,
+    DatasetConfig,
+    load_dataset_config,
+)
+from config_driven_etl.transform import rejected_schema
+from fixture_outcomes import OUTCOMES, fixture_config
+
+DATASETS_DIR = Path(__file__).parents[2] / "datasets"
 
 
 def make_config(columns: list[dict[str, Any]]) -> DatasetConfig:
@@ -75,6 +92,125 @@ class BigQuerySchemaTest(unittest.TestCase):
                 bigquery.SchemaField("zeta", "STRING", mode="NULLABLE"),
                 bigquery.SchemaField("alpha", "FLOAT64", mode="REQUIRED"),
             ],
+        )
+
+
+class TableSpecTest(unittest.TestCase):
+    def test_takes_schema_and_layout_from_the_config(self) -> None:
+        config = DatasetConfig.model_validate(
+            {
+                "name": "sample",
+                "source": {"url": "https://example.org/sample.csv"},
+                "columns": [
+                    {"source": "s", "name": "s", "type": "string"},
+                    {
+                        "source": "d",
+                        "name": "d",
+                        "type": "date",
+                        "format": "%Y-%m-%d",
+                    },
+                ],
+                "target": {
+                    "table": "sample",
+                    "partition_by": "d",
+                    "cluster_by": ["s"],
+                },
+            }
+        )
+
+        self.assertEqual(
+            table_spec(config),
+            TableSpec(
+                schema=tuple(bigquery_schema(config)),
+                partition_by="d",
+                cluster_by=("s",),
+            ),
+        )
+
+    def test_no_layout_when_the_config_has_none(self) -> None:
+        config = make_config([{"name": "s", "type": "string"}])
+
+        spec = table_spec(config)
+
+        self.assertEqual((spec.partition_by, spec.cluster_by), (None, ()))
+
+
+class BigQueryRejectedSchemaTest(unittest.TestCase):
+    def test_fields_and_modes(self) -> None:
+        schema = bigquery_rejected_schema(
+            make_config(
+                [
+                    {"name": "zeta", "type": "string"},
+                    {"name": "alpha", "type": "int", "nullable": False},
+                ]
+            )
+        )
+
+        self.assertEqual(
+            schema,
+            [
+                bigquery.SchemaField("row_number", "INT64", mode="REQUIRED"),
+                bigquery.SchemaField("reasons", "STRING", mode="REPEATED"),
+                bigquery.SchemaField(
+                    "raw",
+                    "RECORD",
+                    mode="REQUIRED",
+                    fields=[
+                        bigquery.SchemaField(
+                            "zeta", "STRING", mode="NULLABLE"
+                        ),
+                        bigquery.SchemaField(
+                            "alpha", "STRING", mode="NULLABLE"
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+    def test_matches_the_rejected_parquet_schema(self) -> None:
+        configs = {name: fixture_config(name) for name in OUTCOMES}
+        for path in sorted(DATASETS_DIR.glob("*.yaml")):
+            configs[path.name] = load_dataset_config(path)
+        for label, config in configs.items():
+            with self.subTest(config=label):
+                expected = rejected_schema(config)
+                raw = expected["raw"]
+                assert isinstance(raw, pl.Struct)
+
+                schema = bigquery_rejected_schema(config)
+
+                self.assertEqual(
+                    [field.name for field in schema], expected.names()
+                )
+                self.assertEqual(
+                    [field.name for field in schema[-1].fields],
+                    [field.name for field in raw.fields],
+                )
+
+
+class RejectedTableSpecTest(unittest.TestCase):
+    def test_rejected_schema_without_layout(self) -> None:
+        config = DatasetConfig.model_validate(
+            {
+                "name": "sample",
+                "source": {"url": "https://example.org/sample.csv"},
+                "columns": [{"source": "s", "name": "s", "type": "string"}],
+                "target": {
+                    "table": "sample",
+                    "partition_by": None,
+                    "cluster_by": ["s"],
+                    "rejected_table": "sample_rejected",
+                },
+            }
+        )
+
+        self.assertEqual(
+            rejected_table_spec(config),
+            TableSpec(
+                schema=tuple(bigquery_rejected_schema(config)),
+                partition_by=None,
+                cluster_by=(),
+            ),
         )
 
 
