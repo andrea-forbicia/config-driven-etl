@@ -19,7 +19,7 @@ from config_driven_etl.dataset_config import (
     load_dataset_config,
 )
 from config_driven_etl.extract import ExtractError
-from config_driven_etl.load import LoadError
+from config_driven_etl.load import LoadError, rejected_parquet_path
 from config_driven_etl.logging import (
     configure_logging,
     log_error,
@@ -190,7 +190,11 @@ def _extract(config: DatasetConfig, settings: Settings) -> None:
 def _transform(config: DatasetConfig, settings: Settings) -> None:
     started = time.perf_counter()
     result = transform_dataset(config, settings.data_dir)
-    _log_stage("transform", config, result, started)
+    # Relative to DATA_DIR, which is a setting and stays out of the logs.
+    rejected_file = rejected_parquet_path(Path(), config.name).as_posix()
+    _log_stage(
+        "transform", config, result, started, rejected_file=rejected_file
+    )
 
 
 def _load(config: DatasetConfig, settings: Settings) -> None:
@@ -199,7 +203,14 @@ def _load(config: DatasetConfig, settings: Settings) -> None:
     client = _bigquery_client(project)
     with client:
         result = load_dataset(config, settings.data_dir, client, dataset)
-    _log_stage("load", config, result, started)
+    extra: dict[str, object] = {}
+    if result.rejected_rows_loaded is not None:
+        # The table name only: the full id holds the project.
+        extra = {
+            "rejected_table": config.target.rejected_table,
+            "rejected_rows_loaded": result.rejected_rows_loaded,
+        }
+    _log_stage("load", config, result, started, **extra)
 
 
 def _bigquery_target(settings: Settings) -> tuple[str, str]:
@@ -223,7 +234,11 @@ def _bigquery_client(project: str) -> bigquery.Client:
 
 
 def _log_stage(
-    stage: str, config: DatasetConfig, result: StageResult, started: float
+    stage: str,
+    config: DatasetConfig,
+    result: StageResult,
+    started: float,
+    **extra: object,
 ) -> None:
     fields: dict[str, object] = {
         "stage": stage,
@@ -235,7 +250,7 @@ def _log_stage(
     }
     if result.rejections is not None:
         fields["rejections"] = result.rejections
-    log_event("stage_completed", **fields)
+    log_event("stage_completed", **fields, **extra)
 
 
 @contextmanager

@@ -48,6 +48,8 @@ class StageResult:
     rows_out: int
     rows_rejected: int = 0
     rejections: dict[str, int] | None = None
+    # Rows loaded into target.rejected_table; None without one.
+    rejected_rows_loaded: int | None = None
 
 
 def extract_dataset(
@@ -160,7 +162,11 @@ def load_dataset(
                 f"{error}\nrejected rows not loaded; {valid.table_id} "
                 "already holds this run's valid rows"
             ) from error
-    return StageResult(rows_in=valid.rows, rows_out=valid.rows)
+    return StageResult(
+        rows_in=valid.rows,
+        rows_out=valid.rows,
+        rejected_rows_loaded=None if rejected is None else rejected.rows,
+    )
 
 
 @dataclass(frozen=True)

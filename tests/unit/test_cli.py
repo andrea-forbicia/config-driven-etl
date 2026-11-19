@@ -202,6 +202,7 @@ class ValidateCommandTest(unittest.TestCase):
 
 LIBRARY = str(fixture_path("library_loans"))
 LOANS = OUTCOMES["library_loans"]
+SENSOR = str(fixture_path("sensor_readings"))
 # Distinctive values, so a leak into the logs is easy to spot.
 PROJECT = "secret-project-4f1c"
 BQ_DATASET = "secret_dataset_4f1c"
@@ -232,15 +233,22 @@ class PipelineCommandsTest(unittest.TestCase):
         self.client = mock.create_autospec(bigquery.Client, instance=True)
         self.client.project = PROJECT
         self.client.__enter__.return_value = self.client
-        table = mock.create_autospec(bigquery.Table, instance=True)
-        table.num_rows = LOANS.rows_valid
-        table.time_partitioning = None
-        self.client.get_table.side_effect = [NotFound("no table"), table]
+        self.tables_hold(LOANS.rows_valid, LOANS.rows_rejected)
         factory = mock.patch(
             "config_driven_etl.cli._bigquery_client", return_value=self.client
         )
         self.client_factory = factory.start()
         self.addCleanup(factory.stop)
+
+    def tables_hold(self, *table_rows: int) -> None:
+        """Tables, in load order, are missing, then hold table_rows rows."""
+        answers: list[object] = [NotFound("no table") for _ in table_rows]
+        for rows in table_rows:
+            table = mock.create_autospec(bigquery.Table, instance=True)
+            table.num_rows = rows
+            table.time_partitioning = None
+            answers.append(table)
+        self.client.get_table.side_effect = answers
 
     def invoke(self, *args: str) -> Result:
         return self.runner.invoke(app, list(args))
@@ -317,13 +325,50 @@ class PipelineCommandsTest(unittest.TestCase):
             self.assertEqual(event["level"], "info")
             self.assertGreaterEqual(event["duration_s"], 0)
         self.assertEqual(events[1]["rejections"], LOANS.rejections)
-        self.client.load_table_from_file.assert_called_once()
+        self.assertEqual(self.client.load_table_from_file.call_count, 2)
+
+    def test_logs_where_the_rejected_rows_are(self) -> None:
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        _, transform, load = self.events(result)
+        # Relative to DATA_DIR, with / on every OS.
+        self.assertEqual(
+            transform["rejected_file"],
+            "processed/library_loans/library_loans.rejected.parquet",
+        )
+        self.assertEqual(
+            (load["rejected_table"], load["rejected_rows_loaded"]),
+            ("library_loans_rejected", LOANS.rows_rejected),
+        )
+
+    def test_without_rejected_table_load_logs_no_rejected_fields(
+        self,
+    ) -> None:
+        self.tables_hold(OUTCOMES["sensor_readings"].rows_valid)
+
+        result = self.invoke("run", SENSOR)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        _, transform, load = self.events(result)
+        self.assertEqual(
+            transform["rejected_file"],
+            "processed/sensor_readings/sensor_readings.rejected.parquet",
+        )
+        self.assertNotIn("rejected_table", load)
+        self.assertNotIn("rejected_rows_loaded", load)
 
     def test_logs_never_contain_settings(self) -> None:
         result = self.invoke("run", LIBRARY)
 
         self.assertEqual(result.exit_code, 0, result.output)
-        for value in (PROJECT, BQ_DATASET):
+        data_dir = os.environ["DATA_DIR"]
+        for value in (
+            PROJECT,
+            BQ_DATASET,
+            data_dir,
+            Path(data_dir).as_posix(),
+        ):
             self.assertNotIn(value, result.stderr)
 
     def test_transform_before_extract_fails(self) -> None:

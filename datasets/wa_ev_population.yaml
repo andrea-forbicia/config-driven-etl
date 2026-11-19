@@ -85,3 +85,6 @@ rules:
 target:
   table: wa_ev_population
   cluster_by: [county, make]
+  # Some New England postal codes arrive without their leading zero and
+  # fail the pattern; their raw values are kept here for inspection.
+  rejected_table: wa_ev_population_rejected

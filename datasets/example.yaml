@@ -147,7 +147,8 @@ target:
   # table. After the valid rows, the load stage loads
   # data/processed/<name>/<name>.rejected.parquet into it, replacing its
   # data on every run (empty when no row is rejected). Columns:
-  # row_number INT64, reasons ARRAY<STRING>, raw STRUCT with every column
+  # row_number INT64 (the record's position: a quoted value spanning lines
+  # counts once), reasons ARRAY<STRING>, raw STRUCT with every column
   # above as a STRING. Never partitioned or clustered: an existing table
   # with this name has its data replaced, but one that is partitioned or
   # clustered fails the run before any load. Removing this option leaves

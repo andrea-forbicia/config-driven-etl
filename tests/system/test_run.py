@@ -15,6 +15,7 @@ from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
+from config_driven_etl.bq_schema import bigquery_rejected_schema
 from config_driven_etl.cli import app
 from config_driven_etl.transform import output_schema, rejected_schema
 from fixture_outcomes import OUTCOMES, fixture_config, fixture_path
@@ -185,6 +186,11 @@ class RunCommandTest(unittest.TestCase):
         self.assertIsNone(frame["title"].to_list()[3])
         self.assertEqual(frame["loan_date"].to_list()[0], date(2026, 2, 3))
         self.assertEqual(
+            self.rejected_row("library_loans", 4)["raw"]["title"],
+            "Dune\nPart Two",
+        )
+        # Row 4 spans two lines, so this record is on line 8 of the file.
+        self.assertEqual(
             self.rejected_row("library_loans", 6),
             {
                 "row_number": 6,
@@ -200,25 +206,44 @@ class RunCommandTest(unittest.TestCase):
                 },
             },
         )
-        (job_config,) = self.bigquery.job_configs
-        self.assertIsNone(job_config.time_partitioning)
+        loaded = self.bigquery.data["project.dataset.library_loans_rejected"]
+        self.assertTrue(loaded.equals(self.rejected("library_loans")))
+        valid_job, rejected_job = self.bigquery.job_configs
+        self.assertIsNone(valid_job.time_partitioning)
+        self.assertEqual(
+            rejected_job.schema,
+            bigquery_rejected_schema(fixture_config("library_loans")),
+        )
 
     def test_second_run_leaves_the_same_state(self) -> None:
         self.run_dataset("library_loans")
         first = self.parquet("library_loans")
         first_rejected = self.rejected("library_loans")
-        first_loaded = self.bigquery.data["project.dataset.library_loans"]
+        first_loaded = dict(self.bigquery.data)
 
         self.run_dataset("library_loans")
 
         self.assertTrue(self.parquet("library_loans").equals(first))
         self.assertTrue(self.rejected("library_loans").equals(first_rejected))
-        self.assertTrue(
-            self.bigquery.data["project.dataset.library_loans"].equals(
-                first_loaded
-            )
+        self.assertEqual(
+            sorted(self.bigquery.data),
+            [
+                "project.dataset.library_loans",
+                "project.dataset.library_loans_rejected",
+            ],
         )
-        self.assertEqual(len(self.bigquery.tables), 1)
+        for table_id, frame in self.bigquery.data.items():
+            with self.subTest(table=table_id):
+                self.assertTrue(frame.equals(first_loaded[table_id]))
+
+    def test_logged_rejected_file_is_the_rejected_parquet(self) -> None:
+        result = self.run_dataset("library_loans")
+
+        transform = self.events(result)[1]
+        path = self.directory / "data" / transform["rejected_file"]
+        self.assertTrue(
+            pl.read_parquet(path).equals(self.rejected("library_loans"))
+        )
 
     def test_logs_one_line_per_stage(self) -> None:
         result = self.run_dataset("sensor_readings")
