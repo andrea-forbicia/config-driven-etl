@@ -23,10 +23,15 @@ from config_driven_etl.load import (
     load_parquet,
     parquet_row_count,
     processed_parquet_path,
+    rejected_parquet_path,
     verify_table_rows,
     write_parquet_files,
 )
-from config_driven_etl.transform import output_schema, transform
+from config_driven_etl.transform import (
+    output_schema,
+    rejected_schema,
+    transform,
+)
 
 
 @dataclass(frozen=True)
@@ -65,7 +70,10 @@ def extract_dataset(
 
 
 def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
-    """Transform the raw CSV and write the valid rows as verified Parquet."""
+    """Transform the raw CSV and write valid and rejected rows as Parquet.
+
+    Both files are verified before either replaces the previous run's.
+    """
     raw = raw_csv_path(data_dir, config.name)
     result = transform(scan_raw_csv(raw, config.source), config)
     try:
@@ -79,8 +87,20 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
         raise ExtractError(
             f"{raw}: cannot read CSV: {error_reason(error)}"
         ) from error
-    path = processed_parquet_path(data_dir, config.name)
-    write_parquet_files([ParquetOutput(path, valid, output_schema(config))])
+    write_parquet_files(
+        [
+            ParquetOutput(
+                processed_parquet_path(data_dir, config.name),
+                valid,
+                output_schema(config),
+            ),
+            ParquetOutput(
+                rejected_parquet_path(data_dir, config.name),
+                rejected,
+                rejected_schema(config),
+            ),
+        ]
+    )
     return StageResult(
         rows_in=valid.height + rejected.height,
         rows_out=valid.height,

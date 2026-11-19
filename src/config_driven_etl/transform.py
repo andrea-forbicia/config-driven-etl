@@ -43,6 +43,20 @@ def output_schema(config: DatasetConfig) -> pl.Schema:
     )
 
 
+def rejected_schema(config: DatasetConfig) -> pl.Schema:
+    """Schema of the rejected rows after transform.
+
+    row_number is the record's position in the input, the first record
+    after the header being 1; reasons lists why it was rejected; raw
+    holds every mapped column as read, in config order. Nesting the
+    values keeps target names from clashing with the other two.
+    """
+    raw = pl.Struct({column.name: pl.String for column in config.columns})
+    return pl.Schema(
+        {"row_number": pl.Int64, "reasons": pl.List(pl.String), "raw": raw}
+    )
+
+
 def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     """Rename mapped source columns to their target names.
 
@@ -305,10 +319,9 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     """Turn raw string columns into typed, clean rows.
 
     Applies every rule of the config and splits the result into valid
-    rows, rejected rows and rejection counts. Rejected rows hold
-    ROW_NUMBER, the raw string of every mapped column under its target
-    name, and REJECTIONS. Raises TransformError if the input columns do
-    not match the config.
+    rows, rejected rows and rejection counts; rejected rows follow
+    rejected_schema. Raises TransformError if the input columns do not
+    match the config.
     """
     lf = keep_raw_values(select_columns(lf, config), config)
     # Duplicates come last: only rows that passed every other rule may
@@ -325,13 +338,16 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     for step in steps:
         lf = step(lf, config)
     result = split_rejected(lf)
-    raw = [
+    raw = pl.struct(
         pl.col(raw_column(column.name)).alias(column.name)
         for column in config.columns
-    ]
-    return replace(
-        result, rejected=result.rejected.select(ROW_NUMBER, *raw, REJECTIONS)
     )
+    rejected = result.rejected.select(
+        pl.col(ROW_NUMBER).alias("row_number"),
+        pl.col(REJECTIONS).alias("reasons"),
+        raw.alias("raw"),
+    )
+    return replace(result, rejected=rejected)
 
 
 def _range_failures(column: Column) -> dict[str, pl.Expr]:

@@ -227,11 +227,12 @@ optional, so the phase is a MINOR change.
       value is lost. Decide first between carrying the raw strings through
       the transform and re-joining them by row number; the valid rows and
       the transform's purity must not change `[feat]`
-- [ ] Write the rejected rows to
-      `data/processed/<name>/rejected.parquet` in the `transform` stage:
-      every target column as `string`, plus `reasons` (list of strings)
-      and `row_number` in the source file. Replaced on every run, written
-      even when empty, verified like the valid output `[feat]`
+- [x] Write the rejected rows to
+      `data/processed/<name>/<name>.rejected.parquet` in the `transform`
+      stage: `row_number` (record position in the source file),
+      `reasons` (list of strings) and `raw`, a struct with every target
+      column as `string`. Replaced on every run, written even when
+      empty, verified like the valid output `[feat]`
 - [ ] Optional `target.rejected_table` in the config: a distinct
       identifier, never partitioned or clustered. Validated, documented in
       `datasets/example.yaml` `[feat]`

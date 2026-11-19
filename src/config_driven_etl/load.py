@@ -36,6 +36,12 @@ def processed_parquet_path(data_dir: Path, name: str) -> Path:
     return data_dir / "processed" / name / f"{name}.parquet"
 
 
+def rejected_parquet_path(data_dir: Path, name: str) -> Path:
+    """Return where the rejected rows of a dataset are stored."""
+    # Names have no dot, so this never equals processed_parquet_path.
+    return data_dir / "processed" / name / f"{name}.rejected.parquet"
+
+
 def write_parquet(df: pl.DataFrame, destination: Path) -> None:
     """Write df to destination as snappy Parquet, replacing any old file.
 
