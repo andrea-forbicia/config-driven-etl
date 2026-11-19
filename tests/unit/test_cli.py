@@ -53,6 +53,9 @@ INVALID_FIXTURES = {
         "target.partition_by: 'id' must be a date or datetime column"
     ),
     "invalid_yaml.yaml": "line 4: expected ',' or ']'",
+    "rejected_table_same_as_table.yaml": (
+        "target.rejected_table: 'loans' is also target.table"
+    ),
 }
 
 VALID_YAML = """\

@@ -68,6 +68,7 @@ def full_config() -> dict[str, Any]:
             "partition_by": "observation_date",
             "cluster_by": ["station_id"],
             "write_mode": "truncate",
+            "rejected_table": "city_weather_rejected",
         },
     }
 
@@ -91,6 +92,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         self.assertIsNone(config.target.partition_by)
         self.assertEqual(config.target.cluster_by, ())
         self.assertEqual(config.target.write_mode, "truncate")
+        self.assertIsNone(config.target.rejected_table)
 
     def test_full_config_keeps_every_value(self) -> None:
         config = DatasetConfig.model_validate(full_config())
@@ -112,6 +114,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         self.assertFalse(config.rules.drop_unmapped_columns)
         self.assertEqual(config.target.partition_by, "observation_date")
         self.assertEqual(config.target.cluster_by, ("station_id",))
+        self.assertEqual(config.target.rejected_table, "city_weather_rejected")
 
     def test_every_column_type_is_accepted(self) -> None:
         for column_type in ColumnType:
@@ -203,6 +206,11 @@ class DatasetConfigInvalidTest(unittest.TestCase):
                 ("cluster_by", 0),
             ),
             ("target", {"table": "My-Table"}, ("table",)),
+            (
+                "target",
+                {"table": "t", "rejected_table": "Bad-Name"},
+                ("rejected_table",),
+            ),
         ]
         for section, value, location in cases:
             with self.subTest(section=section, value=value):
@@ -265,6 +273,14 @@ class DatasetConfigInvalidTest(unittest.TestCase):
         data["target"]["cluster_by"] = ["a", "b", "c", "d", "e"]
 
         self.assert_invalid(data, ("target", "cluster_by"))
+
+    def test_rejected_table_has_no_layout_options(self) -> None:
+        for key in ["rejected_partition_by", "rejected_cluster_by"]:
+            with self.subTest(key=key):
+                data = minimal_config()
+                data["target"].update(rejected_table="r", **{key: "id"})
+
+                self.assert_invalid(data, ("target", key))
 
     def test_unsupported_write_mode(self) -> None:
         data = minimal_config()
@@ -878,6 +894,15 @@ class DatasetConfigReferencesTest(unittest.TestCase):
         self.assertEqual(
             self.config_error(data),
             "columns: name 'id' is used more than once",
+        )
+
+    def test_rejected_table_must_differ_from_table(self) -> None:
+        data = minimal_config()
+        data["target"]["rejected_table"] = data["target"]["table"]
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.rejected_table: 'sample' is also target.table",
         )
 
     def test_unknown_partition_column(self) -> None:
