@@ -13,15 +13,20 @@ and this project adheres to
 - The `transform` stage writes the rejected rows to
   `data/processed/<name>/<name>.rejected.parquet`, next to the valid
   ones: `row_number` (the record's position in the source file, the
-  first record after the header being 1), `reasons` (every reason the
-  row was rejected) and `raw` (a struct with every mapped column as
-  read, before any rule changed it). The file is written on every run,
-  empty when no row is rejected.
+  first record after the header being 1; a quoted value spanning lines
+  counts once), `reasons` (every reason the row was rejected) and `raw`
+  (a struct with every mapped column as read, before any rule changed
+  it). The file is written on every run, empty when no row is rejected.
 - Optional `target.rejected_table` in the dataset config. When set, the
   `load` stage loads the rejected rows into that table after the valid
   ones, with `WRITE_TRUNCATE`, a schema derived from the config
   (`reasons` as `ARRAY<STRING>`, `raw` as a `STRUCT`) and a row count
   check. A failure of this second load fails the run.
+- Stage log lines say where the rejected rows are: `transform` logs
+  `rejected_file`, relative to `DATA_DIR`; with `rejected_table`, `load`
+  logs `rejected_table` and `rejected_rows_loaded`.
+- `wa_ev_population` loads its rejected rows into
+  `wa_ev_population_rejected`.
 
 ### Fixed
 

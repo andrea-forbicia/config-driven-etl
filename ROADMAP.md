@@ -240,7 +240,7 @@ optional, so the phase is a MINOR change.
       Parquet with `WRITE_TRUNCATE` and an explicit schema derived from
       the config (in `bq_schema.py`), and verify its row count. Decide
       first whether a failure of this second load fails the run `[feat]`
-- [ ] Log the rejected output path and table in the stage lines, extend
+- [x] Log the rejected output path and table in the stage lines, extend
       the system tests (the `gcp` test already loads the rejected rows),
       and use `rejected_table` in at least one real dataset `[test]`
 - [ ] Release `v1.3.0`: version bump, `CHANGELOG.md` section, annotated

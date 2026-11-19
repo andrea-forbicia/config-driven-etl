@@ -58,10 +58,8 @@ def fake_client(*table_rows: int) -> mock.MagicMock:
     return client
 
 
-def with_rejected_table(config: DatasetConfig) -> DatasetConfig:
-    target = config.target.model_copy(
-        update={"rejected_table": "library_loans_rejected"}
-    )
+def without_rejected_table(config: DatasetConfig) -> DatasetConfig:
+    target = config.target.model_copy(update={"rejected_table": None})
     return config.model_copy(update={"target": target})
 
 
@@ -222,9 +220,10 @@ class LoadDatasetTest(PipelineTestCase):
         ]
 
     def test_loads_the_parquet_into_the_target_table(self) -> None:
+        config = without_rejected_table(self.config)
         client = fake_client(LOANS.rows_valid)
 
-        result = load_dataset(self.config, self.data_dir, client, "dataset")
+        result = load_dataset(config, self.data_dir, client, "dataset")
 
         self.assertEqual(
             result,
@@ -238,19 +237,28 @@ class LoadDatasetTest(PipelineTestCase):
         rejected_parquet_path(self.data_dir, self.config.name).unlink()
         client = fake_client(LOANS.rows_valid)
 
-        load_dataset(self.config, self.data_dir, client, "dataset")
+        load_dataset(
+            without_rejected_table(self.config),
+            self.data_dir,
+            client,
+            "dataset",
+        )
 
         self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
 
     def test_loads_the_rejected_rows_after_the_valid_ones(self) -> None:
-        config = with_rejected_table(self.config)
+        config = self.config
         client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
 
         result = load_dataset(config, self.data_dir, client, "dataset")
 
         self.assertEqual(
             result,
-            StageResult(rows_in=LOANS.rows_valid, rows_out=LOANS.rows_valid),
+            StageResult(
+                rows_in=LOANS.rows_valid,
+                rows_out=LOANS.rows_valid,
+                rejected_rows_loaded=LOANS.rows_rejected,
+            ),
         )
         self.assertEqual(
             self.loaded_tables(client), [VALID_TABLE, REJECTED_TABLE]
@@ -274,12 +282,7 @@ class LoadDatasetTest(PipelineTestCase):
         client.load_table_from_file.side_effect = [valid_job, rejected_job]
 
         with self.assertRaises(LoadError) as context:
-            load_dataset(
-                with_rejected_table(self.config),
-                self.data_dir,
-                client,
-                "dataset",
-            )
+            load_dataset(self.config, self.data_dir, client, "dataset")
 
         self.assertEqual(
             str(context.exception).splitlines(),
@@ -295,12 +298,7 @@ class LoadDatasetTest(PipelineTestCase):
         client = fake_client(LOANS.rows_valid, loaded)
 
         with self.assertRaises(LoadError) as context:
-            load_dataset(
-                with_rejected_table(self.config),
-                self.data_dir,
-                client,
-                "dataset",
-            )
+            load_dataset(self.config, self.data_dir, client, "dataset")
 
         self.assertEqual(
             str(context.exception).splitlines(),
@@ -320,12 +318,7 @@ class LoadDatasetTest(PipelineTestCase):
         client.get_table.side_effect = [NotFound("no table yet"), partitioned]
 
         with self.assertRaises(LoadError) as context:
-            load_dataset(
-                with_rejected_table(self.config),
-                self.data_dir,
-                client,
-                "dataset",
-            )
+            load_dataset(self.config, self.data_dir, client, "dataset")
 
         self.assertEqual(
             str(context.exception).splitlines(),
@@ -342,12 +335,7 @@ class LoadDatasetTest(PipelineTestCase):
         client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
 
         with self.assertRaises(LoadError) as context:
-            load_dataset(
-                with_rejected_table(self.config),
-                self.data_dir,
-                client,
-                "dataset",
-            )
+            load_dataset(self.config, self.data_dir, client, "dataset")
 
         self.assertIn(f"{path}: cannot read Parquet", str(context.exception))
         client.get_table.assert_not_called()
@@ -360,7 +348,12 @@ class LoadDatasetTest(PipelineTestCase):
         with self.assertRaisesRegex(
             LoadError, f"{loaded} rows loaded, expected {LOANS.rows_valid}"
         ):
-            load_dataset(self.config, self.data_dir, client, "dataset")
+            load_dataset(
+                without_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
 
 
 if __name__ == "__main__":

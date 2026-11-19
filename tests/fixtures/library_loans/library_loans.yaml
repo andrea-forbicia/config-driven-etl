@@ -7,7 +7,9 @@
 #   1  valid
 #   2  valid       title contains the delimiter inside quotes
 #   3  rejected    loan_date: ISO date, not %d/%m/%Y
-#   4  rejected    branch_code: null in a non-nullable column
+#   4  rejected    branch_code: null in a non-nullable column; the quoted
+#                  title spans two lines of the file, so row 6 is on
+#                  line 8 and row_number counts records, not lines
 #   5  valid       title "Caf\ufffd society" after lossy decoding
 #   6  rejected    fine_eur: -1.00 below min 0
 #   7  rejected    loan_date: 31/02/2026 does not exist
@@ -19,7 +21,9 @@
 #  13  rejected    branch_code: "099" is not in allowed_values
 #  14  rejected    branch_code: "7" lost its leading zeros; it fails the
 #                  pattern, and only the pattern reason is given
-# Totals: 14 rows, 4 valid, 10 rejected. "Internal Note" is dropped.
+# Totals: 14 rows (15 lines after the header), 4 valid, 10 rejected.
+# "Internal Note" is dropped. Rejected rows are loaded into their own
+# table.
 name: library_loans
 source:
   path: library_loans.csv
@@ -65,3 +69,4 @@ rules:
 target:
   table: library_loans
   cluster_by: [branch_code]
+  rejected_table: library_loans_rejected
