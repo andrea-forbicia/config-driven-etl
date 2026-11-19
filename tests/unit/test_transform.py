@@ -10,6 +10,7 @@ from config_driven_etl import transform as transform_module
 from config_driven_etl.dataset_config import Column, ColumnType, DatasetConfig
 from config_driven_etl.transform import (
     REJECTIONS,
+    ROW_NUMBER,
     TransformError,
     apply_null_values,
     cast_columns,
@@ -18,7 +19,9 @@ from config_driven_etl.transform import (
     check_nullable,
     check_pattern,
     check_range,
+    keep_raw_values,
     output_schema,
+    raw_column,
     select_columns,
     split_rejected,
     transform,
@@ -220,6 +223,60 @@ class SelectColumnsTest(unittest.TestCase):
 
 
 ALL_TYPES = ("string", "int", "float", "bool", "date", "datetime")
+
+
+class KeepRawValuesTest(unittest.TestCase):
+    def test_numbers_rows_from_one_in_input_order(self) -> None:
+        config = typed_config({"a": "string"})
+
+        result = keep_raw_values(raw_frame({"a": ["x", "y", "z"]}), config)
+
+        self.assertEqual(result.collect()[ROW_NUMBER].to_list(), [1, 2, 3])
+
+    def test_copies_every_column_as_written(self) -> None:
+        config = typed_config({"a": "int", "b": "string"})
+        data: dict[str, list[str | None]] = {
+            "a": [" 1 ", None, "N/A"],
+            "b": ["", "x", None],
+        }
+
+        result = keep_raw_values(raw_frame(data), config).collect()
+
+        for name, values in data.items():
+            with self.subTest(column=name):
+                self.assertEqual(result[raw_column(name)].to_list(), values)
+                self.assertEqual(result[name].to_list(), values)
+
+    def test_added_columns_types(self) -> None:
+        config = typed_config({"a": "int", "b": "date"})
+
+        schema = keep_raw_values(
+            raw_frame({"a": ["1"], "b": ["2026-01-01"]}), config
+        ).collect_schema()
+
+        self.assertEqual(schema[ROW_NUMBER], pl.Int64)
+        self.assertEqual(schema[raw_column("a")], pl.String)
+        self.assertEqual(schema[raw_column("b")], pl.String)
+
+    def test_raw_columns_cannot_clash_with_target_names(self) -> None:
+        self.assertTrue(raw_column("a").startswith("#"))
+        self.assertTrue(ROW_NUMBER.startswith("#"))
+
+    def test_empty_input(self) -> None:
+        config = typed_config({"a": "string"})
+
+        result = keep_raw_values(raw_frame({"a": []}), config).collect()
+
+        self.assertEqual(result.height, 0)
+        self.assertIn(ROW_NUMBER, result.columns)
+        self.assertIn(raw_column("a"), result.columns)
+
+    def test_does_not_collect_the_input(self) -> None:
+        config = typed_config({"a": "string"})
+
+        result = keep_raw_values(raw_frame({"a": ["x"]}), config)
+
+        self.assertIsInstance(result, pl.LazyFrame)
 
 
 def nullify(
@@ -1162,6 +1219,15 @@ class SplitRejectedTest(unittest.TestCase):
             [["x: null", "y: null"], ["x: null"]],
         )
 
+    def test_valid_rows_drop_every_internal_column(self) -> None:
+        lf = with_reasons(["a"], [[]]).with_columns(
+            pl.lit("x").alias("#other")
+        )
+
+        valid = split_rejected(lf).valid.collect()
+
+        self.assertEqual(valid.columns, ["k"])
+
     def test_counts_rows_per_reason_most_frequent_first(self) -> None:
         self.assertEqual(self.counts.rows(), [("x: null", 2), ("y: null", 1)])
 
@@ -1307,6 +1373,47 @@ class TransformTest(unittest.TestCase):
             ],
         )
 
+    def test_rejected_rows_keep_raw_values_and_row_numbers(self) -> None:
+        _, rejected, _ = self.collect()
+
+        self.assertEqual(
+            rejected.drop(REJECTIONS).rows(),
+            [
+                (3, "x", "03/01/2026", "1"),
+                (4, None, "04/01/2026", "1"),
+                (5, "1", "05/01/2026", "1"),
+                (6, "3", "2026-01-06", "1"),
+                (7, "4", "07/01/2026", "11"),
+            ],
+        )
+
+    def test_rejected_rows_schema(self) -> None:
+        _, rejected, _ = self.collect()
+
+        self.assertEqual(
+            rejected.schema,
+            pl.Schema(
+                {
+                    ROW_NUMBER: pl.Int64,
+                    "id": pl.String,
+                    "day": pl.String,
+                    "score": pl.String,
+                    REJECTIONS: pl.List(pl.String),
+                }
+            ),
+        )
+
+    def test_rejected_values_are_not_trimmed_or_nullified(self) -> None:
+        config = typed_config(
+            {"a": "int"}, required=["a"], null_values={"a": ["N/A"]}
+        )
+        raw = raw_frame({"a": ["N/A", " x ", "  ", "1"]})
+
+        rejected = transform(raw, config).rejected.collect()
+
+        self.assertEqual(rejected["a"].to_list(), ["N/A", " x ", "  "])
+        self.assertEqual(rejected[ROW_NUMBER].to_list(), [1, 2, 3])
+
     def test_every_input_row_is_valid_or_rejected(self) -> None:
         valid, rejected, _ = self.collect()
 
@@ -1322,6 +1429,9 @@ class TransformTest(unittest.TestCase):
         valid, rejected, counts = self.collect()
 
         self.assertEqual(valid.columns, ["id", "day", "score"])
+        self.assertEqual(
+            rejected.columns, [ROW_NUMBER, "id", "day", "score", REJECTIONS]
+        )
         self.assertEqual(
             (valid.height, rejected.height, counts.height), (0, 0, 0)
         )
