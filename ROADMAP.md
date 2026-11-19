@@ -243,7 +243,7 @@ optional, so the phase is a MINOR change.
 - [x] Log the rejected output path and table in the stage lines, extend
       the system tests (the `gcp` test already loads the rejected rows),
       and use `rejected_table` in at least one real dataset `[test]`
-- [ ] Release `v1.3.0`: version bump, `CHANGELOG.md` section, annotated
+- [x] Release `v1.3.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
 
 Exit: after `run`, each rejected row of both fixture datasets is in the

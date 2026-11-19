@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-19
+
 ### Added
 
 - The `transform` stage writes the rejected rows to
@@ -297,7 +299,8 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.0.0...v1.1.0
