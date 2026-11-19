@@ -43,17 +43,17 @@ NOT_LOADED = (
 def fake_client(*table_rows: int) -> mock.MagicMock:
     """A client whose tables, in load order, are missing, then hold rows.
 
-    Each table answers two get_table calls: ensure_table finds it
-    missing, verify_table_rows finds table_rows rows.
+    ensure_table finds every table missing, then verify_table_rows finds
+    table_rows rows in each.
     """
     client = mock.create_autospec(bigquery.Client, instance=True)
     client.project = "project"
-    answers: list[object] = []
+    answers: list[object] = [NotFound("no table yet") for _ in table_rows]
     for rows in table_rows:
         table = mock.create_autospec(bigquery.Table, instance=True)
         table.num_rows = rows
         table.time_partitioning = None
-        answers += [NotFound("no table yet"), table]
+        answers.append(table)
     client.get_table.side_effect = answers
     return client
 
@@ -261,7 +261,7 @@ class LoadDatasetTest(PipelineTestCase):
         )
         self.assertEqual(
             [args[0] for args, _ in client.get_table.call_args_list],
-            [VALID_TABLE, VALID_TABLE, REJECTED_TABLE, REJECTED_TABLE],
+            [VALID_TABLE, REJECTED_TABLE, VALID_TABLE, REJECTED_TABLE],
         )
 
     def test_failed_rejected_load_says_the_valid_rows_are_loaded(
@@ -310,6 +310,31 @@ class LoadDatasetTest(PipelineTestCase):
                 NOT_LOADED,
             ],
         )
+
+    def test_rejected_table_layout_is_checked_before_any_load(self) -> None:
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+        partitioned = mock.create_autospec(bigquery.Table, instance=True)
+        partitioned.time_partitioning = bigquery.TimePartitioning(field="x")
+        partitioned.range_partitioning = None
+        partitioned.clustering_fields = None
+        client.get_table.side_effect = [NotFound("no table yet"), partitioned]
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(
+                with_rejected_table(self.config),
+                self.data_dir,
+                client,
+                "dataset",
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{REJECTED_TABLE}: partitioned by x, config says nothing",
+                f"{REJECTED_TABLE}: delete the table to recreate it",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
 
     def test_missing_rejected_file_fails_before_any_load(self) -> None:
         path = rejected_parquet_path(self.data_dir, self.config.name)
