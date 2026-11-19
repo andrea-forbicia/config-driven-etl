@@ -52,7 +52,8 @@ def write_parquet_files(outputs: Sequence[ParquetOutput]) -> None:
     and verified against its schema and row count; only when all of
     them pass are they renamed into place. A failed write or check
     leaves every previous output untouched and no temporary file
-    behind. Raises LoadError naming the destination that failed.
+    behind; a failed rename leaves the earlier destinations already
+    replaced. Raises LoadError naming the destination that failed.
     """
     temps: list[Path] = []
     try:
@@ -63,8 +64,9 @@ def write_parquet_files(outputs: Sequence[ParquetOutput]) -> None:
             _check_parquet(
                 temp, output.schema, output.frame.height, output.destination
             )
-        # Each rename is atomic, the set is not: a process killed
-        # between two renames leaves outputs from different runs.
+        # Each rename is atomic, the set is not: a failed rename, or a
+        # process killed between two, leaves outputs from different
+        # runs.
         for temp, output in zip(temps, outputs, strict=True):
             try:
                 temp.replace(output.destination)

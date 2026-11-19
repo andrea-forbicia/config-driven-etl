@@ -293,13 +293,15 @@ class WriteParquetFilesTest(unittest.TestCase):
         self.assert_previous_outputs_kept()
 
     def test_failed_rename_leaves_no_temporary_file(self) -> None:
+        self.write_previous_outputs()
         # A non-empty directory cannot be replaced by a file.
+        self.second.unlink()
         (self.second / "blocker").mkdir(parents=True)
 
         with self.assertRaises(LoadError) as context:
             write_parquet_files(
                 self.outputs(
-                    pl.DataFrame({"a": [1]}), pl.DataFrame({"b": [2]})
+                    pl.DataFrame({"a": [3]}), pl.DataFrame({"b": [4]})
                 )
             )
 
@@ -307,6 +309,8 @@ class WriteParquetFilesTest(unittest.TestCase):
             f"{self.second}: cannot write Parquet", str(context.exception)
         )
         self.assertFalse(list(self.parent.glob("*.part")))
+        # The accepted limit: renames before the failed one stay done.
+        self.assertEqual(pl.read_parquet(self.first).rows(), [(3,)])
 
     def test_failed_first_run_leaves_no_file(self) -> None:
         unwritable = pl.DataFrame({"o": [object()]}, schema={"o": pl.Object})

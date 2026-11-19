@@ -121,6 +121,29 @@ class TransformDatasetTest(PipelineTestCase):
                     pl.read_parquet(path).height, outcome.rows_valid
                 )
 
+    def test_output_off_its_config_keeps_the_previous_output(self) -> None:
+        config = fixture_config("library_loans")
+        extract_dataset(config, self.data_dir, self.session)
+        transform_dataset(config, self.data_dir)
+        path = processed_parquet_path(self.data_dir, config.name)
+        previous = pl.read_parquet(path)
+        expected = pl.Schema({**previous.schema, "extra": pl.String})
+
+        with (
+            mock.patch(
+                "config_driven_etl.pipeline.output_schema",
+                return_value=expected,
+            ),
+            self.assertRaises(LoadError) as context,
+        ):
+            transform_dataset(config, self.data_dir)
+
+        self.assertIn(
+            f"{path}: missing column 'extra'", str(context.exception)
+        )
+        self.assertTrue(pl.read_parquet(path).equals(previous))
+        self.assertEqual(list(path.parent.iterdir()), [path])
+
     def test_missing_raw_file_is_an_extract_error(self) -> None:
         with self.assertRaises(ExtractError):
             transform_dataset(fixture_config("sensor_readings"), self.data_dir)
