@@ -222,7 +222,7 @@ Rejected rows are written next to the valid ones and, when the config asks
 for it, loaded into their own BigQuery table. The new config field is
 optional, so the phase is a MINOR change.
 
-- [ ] Keep each rejected row's raw source values: today a value that fails
+- [x] Keep each rejected row's raw source values: today a value that fails
       its cast is already null in `TransformResult.rejected`, so the bad
       value is lost. Decide first between carrying the raw strings through
       the transform and re-joining them by row number; the valid rows and

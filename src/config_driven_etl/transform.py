@@ -1,9 +1,10 @@
 """Generic transformation rules applied from a dataset config."""
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import polars as pl
+import polars.selectors as cs
 
 from config_driven_etl.dataset_config import (
     MIN_YEAR,
@@ -16,6 +17,9 @@ from config_driven_etl.dataset_config import (
 # List of rejection reasons per row. The '#' keeps it apart from target
 # names, which are lowercase identifiers.
 REJECTIONS = "#rejections"
+
+# Position of each row in the input, the first record being 1.
+ROW_NUMBER = "#row"
 
 # Polars dtype that cast_columns produces for each column type.
 POLARS_TYPES: dict[ColumnType, pl.DataType] = {
@@ -68,6 +72,26 @@ def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
 
 def _quoted(names: Sequence[str]) -> str:
     return ", ".join(f"'{name}'" for name in names)
+
+
+def raw_column(name: str) -> str:
+    """Name of the column holding the raw value of target column name."""
+    return f"#raw:{name}"
+
+
+def keep_raw_values(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
+    """Add ROW_NUMBER and a raw copy of every mapped column.
+
+    The copies keep the values exactly as read, so rejected rows can be
+    reported with the values that failed, before any rule changed them.
+    """
+    return lf.with_row_index(ROW_NUMBER, offset=1).with_columns(
+        pl.col(ROW_NUMBER).cast(pl.Int64),
+        *(
+            pl.col(column.name).alias(raw_column(column.name))
+            for column in config.columns
+        ),
+    )
 
 
 def apply_null_values(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
@@ -255,10 +279,10 @@ class TransformResult:
 def split_rejected(lf: pl.LazyFrame) -> TransformResult:
     """Split rows by their REJECTIONS list and count rejections.
 
-    Valid rows have no reason and lose the REJECTIONS column; rejected
-    rows keep it. rejection_counts has one row per reason with the
-    number of rows it rejected, most frequent first, so a row with two
-    reasons counts once under each.
+    Valid rows have no reason and lose every internal '#' column, such
+    as REJECTIONS; rejected rows keep them all. rejection_counts has
+    one row per reason with the number of rows it rejected, most
+    frequent first, so a row with two reasons counts once under each.
     """
     # Cached so the valid and rejected frames share one read of the input.
     lf = lf.with_columns(_rejections(lf, [])).cache()
@@ -271,7 +295,7 @@ def split_rejected(lf: pl.LazyFrame) -> TransformResult:
         .sort(["rows", "reason"], descending=[True, False])
     )
     return TransformResult(
-        valid=lf.filter(is_valid).drop(REJECTIONS),
+        valid=lf.filter(is_valid).drop(cs.starts_with("#")),
         rejected=rejected,
         rejection_counts=counts,
     )
@@ -281,10 +305,12 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     """Turn raw string columns into typed, clean rows.
 
     Applies every rule of the config and splits the result into valid
-    rows, rejected rows and rejection counts. Raises TransformError if
-    the input columns do not match the config.
+    rows, rejected rows and rejection counts. Rejected rows hold
+    ROW_NUMBER, the raw string of every mapped column under its target
+    name, and REJECTIONS. Raises TransformError if the input columns do
+    not match the config.
     """
-    lf = select_columns(lf, config)
+    lf = keep_raw_values(select_columns(lf, config), config)
     # Duplicates come last: only rows that passed every other rule may
     # claim a key.
     steps = (
@@ -298,7 +324,14 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
     )
     for step in steps:
         lf = step(lf, config)
-    return split_rejected(lf)
+    result = split_rejected(lf)
+    raw = [
+        pl.col(raw_column(column.name)).alias(column.name)
+        for column in config.columns
+    ]
+    return replace(
+        result, rejected=result.rejected.select(ROW_NUMBER, *raw, REJECTIONS)
+    )
 
 
 def _range_failures(column: Column) -> dict[str, pl.Expr]:
