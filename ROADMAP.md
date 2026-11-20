@@ -301,7 +301,7 @@ config or settings, so the phase is a MINOR change.
       gates fail, the message gives both reasons `[feat]`
 - [x] Use `min_rows` in the real datasets, from their measured row
       counts, with a system test for a header-only source `[test]`
-- [ ] `LOG_FORMAT` setting: `json` (default, unchanged) or `pretty`, one
+- [x] `LOG_FORMAT` setting: `json` (default, unchanged) or `pretty`, one
       aligned text line per event, errors included. Opt-in only, never
       chosen from whether stderr is a terminal. Decide first the time
       zone of the pretty timestamps and which format is used when the

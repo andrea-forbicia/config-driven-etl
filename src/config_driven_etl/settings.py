@@ -7,19 +7,18 @@ from pydantic import ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from config_driven_etl.dataset_config import Identifier
+from config_driven_etl.logging import LogFormat
 
 
 class SettingsError(Exception):
     """A required environment setting is missing or invalid."""
 
 
-class Settings(BaseSettings):
-    """Environment-level settings shared by every dataset run.
+class LogSettings(BaseSettings):
+    """The log format alone, read before any other setting.
 
-    The GCP fields are optional so that commands which never reach
-    BigQuery (validate, extract, transform) run without them.
-    Credentials are left to the Google SDK (ADC) so they never pass
-    through this object and cannot end up in logs.
+    Kept apart so that an invalid setting is still reported in the
+    format that was asked for.
     """
 
     model_config = SettingsConfigDict(
@@ -28,6 +27,18 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
         extra="ignore",
     )
+
+    log_format: LogFormat = "json"
+
+
+class Settings(LogSettings):
+    """Environment-level settings shared by every dataset run.
+
+    The GCP fields are optional so that commands which never reach
+    BigQuery (validate, extract, transform) run without them.
+    Credentials are left to the Google SDK (ADC) so they never pass
+    through this object and cannot end up in logs.
+    """
 
     gcp_project_id: str | None = None
     bq_dataset: str | None = None
@@ -46,6 +57,17 @@ class Settings(BaseSettings):
         return self
 
 
+def load_log_format() -> LogFormat:
+    """Read LOG_FORMAT alone; JSON if it is invalid.
+
+    An invalid value is reported by load_settings, in JSON.
+    """
+    try:
+        return LogSettings().log_format
+    except ValidationError:
+        return "json"
+
+
 def load_settings() -> Settings:
     """Read the settings, raising SettingsError if any is invalid.
 
@@ -59,6 +81,7 @@ def load_settings() -> Settings:
             _problem(detail["loc"], detail["msg"])
             for detail in error.errors(include_input=False)
         ]
+        # Not chained: the original message quotes the values.
         raise SettingsError("\n".join(problems)) from None
 
 

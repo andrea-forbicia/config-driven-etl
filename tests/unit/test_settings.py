@@ -4,7 +4,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from config_driven_etl.settings import Settings, SettingsError, load_settings
+from config_driven_etl.settings import (
+    Settings,
+    SettingsError,
+    load_log_format,
+    load_settings,
+)
 
 
 class SettingsTest(unittest.TestCase):
@@ -74,6 +79,35 @@ class SettingsTest(unittest.TestCase):
         self.assertNotIn(
             "google_application_credentials", settings.model_dump()
         )
+
+    def test_log_format_defaults_to_json(self) -> None:
+        self.assertEqual(load_log_format(), "json")
+        self.assertEqual(load_settings().log_format, "json")
+
+    def test_reads_the_log_format(self) -> None:
+        os.environ["LOG_FORMAT"] = "pretty"
+
+        self.assertEqual(load_log_format(), "pretty")
+        self.assertEqual(load_settings().log_format, "pretty")
+
+    def test_log_format_is_read_despite_other_invalid_settings(self) -> None:
+        os.environ.update(LOG_FORMAT="pretty", BQ_AUDIT_TABLE="Bad-Name")
+
+        self.assertEqual(load_log_format(), "pretty")
+        with self.assertRaises(SettingsError):
+            load_settings()
+
+    def test_invalid_log_format_falls_back_to_json(self) -> None:
+        os.environ["LOG_FORMAT"] = "fancy"
+
+        self.assertEqual(load_log_format(), "json")
+        with self.assertRaises(SettingsError) as context:
+            load_settings()
+        self.assertTrue(
+            str(context.exception).startswith("LOG_FORMAT: "),
+            str(context.exception),
+        )
+        self.assertNotIn("fancy", str(context.exception))
 
     def test_audit_table_is_optional(self) -> None:
         self.assertIsNone(Settings().bq_audit_table)
