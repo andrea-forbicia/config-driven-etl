@@ -308,7 +308,7 @@ config or settings, so the phase is a MINOR change.
       settings themselves are invalid `[feat]`
 - [x] Document `LOG_FORMAT` in `.env.example`, the README run section and
       the CLAUDE.md settings block; system test of a `pretty` run `[docs]`
-- [ ] Release `v1.5.0`: version bump, `CHANGELOG.md` section, annotated
+- [x] Release `v1.5.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
 
 Exit: a header-only source exits with the gate's code and leaves the
