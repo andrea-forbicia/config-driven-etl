@@ -37,7 +37,9 @@ flowchart LR
 
 Each stage logs one JSON line to stderr, and every command ends with a
 `run_finished` line summarizing it; all lines of a command share a
-`run_id`. Exit codes per error category are listed by
+`run_id`. With `BQ_AUDIT_TABLE` set, that summary is also appended as one
+row to that table in `BQ_DATASET`, for every dataset and every command,
+failed or not. Exit codes per error category are listed by
 `python -m config_driven_etl --help`.
 
 ## Setup
@@ -85,7 +87,8 @@ ORDER BY day DESC;
 
 **Sandbox expiry**: in the BigQuery sandbox, tables are deleted 60 days
 after creation and partitions older than 60 days are dropped. The next run
-recreates a deleted table. Rows dated more than 60 days ago in a
+recreates a deleted table; for the audit table, that means its history
+restarts. Rows dated more than 60 days ago in a
 partitioned table are dropped by BigQuery, and the load fails its row
 count check.
 

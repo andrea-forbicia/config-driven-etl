@@ -276,6 +276,36 @@ def load_parquet(
         job.result()
 
 
+def append_rows(
+    client: bigquery.Client,
+    table_id: str,
+    spec: TableSpec,
+    rows: Sequence[Mapping[str, object]],
+) -> None:
+    """Append rows to the table with a load job and wait for it.
+
+    A load job, not streaming, which the BigQuery sandbox does not
+    allow; the schema comes from the spec, never autodetection. Raises
+    LoadError if the job fails or appends a different number of rows.
+    """
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        schema=list(spec.schema),
+        autodetect=False,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+    )
+    with _bigquery_errors(table_id):
+        job = client.load_table_from_json(
+            [dict(row) for row in rows], table_id, job_config=job_config
+        )
+        job.result()
+    if job.output_rows != len(rows):
+        raise LoadError(
+            f"{table_id}: {job.output_rows} rows appended, "
+            f"expected {len(rows)}"
+        )
+
+
 def _time_partitioning(
     spec: TableSpec,
 ) -> bigquery.TimePartitioning | None:

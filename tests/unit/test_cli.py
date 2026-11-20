@@ -14,6 +14,7 @@ from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
 from config_driven_etl import __version__
+from config_driven_etl.bq_schema import AUDIT_TABLE_SPEC
 from config_driven_etl.cli import ExitCode, app
 from fixture_outcomes import FIXTURES, OUTCOMES, fixture_path
 
@@ -244,14 +245,19 @@ class PipelineCommandsTest(unittest.TestCase):
         self.client_factory = factory.start()
         self.addCleanup(factory.stop)
 
-    def tables_hold(self, *table_rows: int) -> None:
-        """Tables, in load order, are missing, then hold table_rows rows."""
+    def tables_hold(self, *table_rows: int, audit: bool = False) -> None:
+        """Tables, in load order, are missing, then hold table_rows rows.
+
+        With audit, the audit table is looked up last and is missing too.
+        """
         answers: list[object] = [NotFound("no table") for _ in table_rows]
         for rows in table_rows:
             table = mock.create_autospec(bigquery.Table, instance=True)
             table.num_rows = rows
             table.time_partitioning = None
             answers.append(table)
+        if audit:
+            answers.append(NotFound("no audit table"))
         self.client.get_table.side_effect = answers
 
     def invoke(self, *args: str) -> Result:
@@ -581,9 +587,161 @@ class PipelineCommandsTest(unittest.TestCase):
         self.assertGreaterEqual(summary["duration_s"], 0)
         keys = ["stage", "rows_in", "rows_out", "rows_rejected", "duration_s"]
         self.assertEqual(
-            summary["stages"],
+            [{key: stage[key] for key in keys} for stage in summary["stages"]],
             [{key: stage[key] for key in keys} for stage in stages],
         )
+        _, transform, load = summary["stages"]
+        self.assertEqual(
+            {item["reason"]: item["rows"] for item in transform["rejections"]},
+            LOANS.rejections,
+        )
+        self.assertEqual(load["rejections"], [])
+
+    def enable_audit(self, *table_rows: int) -> mock.MagicMock:
+        """Set BQ_AUDIT_TABLE; return the job that appends the row."""
+        os.environ["BQ_AUDIT_TABLE"] = "etl_runs"
+        self.tables_hold(*table_rows, audit=True)
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = 1
+        self.client.load_table_from_json.return_value = job
+        return job
+
+    def audit_rows(self) -> list[dict[str, Any]]:
+        calls = self.client.load_table_from_json.call_args_list
+        for (_, table_id), _ in calls:
+            self.assertEqual(table_id, f"{PROJECT}.{BQ_DATASET}.etl_runs")
+        return [row for (rows, _), _ in calls for row in rows]
+
+    def assert_row_is_the_summary(
+        self, row: dict[str, Any], result: Result
+    ) -> None:
+        summary = self.summary(result)
+        for key in ["time", "level", "event"]:
+            del summary[key]
+        self.assertEqual(row, summary)
+
+    def test_audit_appends_the_summary_of_a_run(self) -> None:
+        self.enable_audit(LOANS.rows_valid, LOANS.rows_rejected)
+
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        (row,) = self.audit_rows()
+        self.assert_row_is_the_summary(row, result)
+        self.assertEqual((row["outcome"], row["exit_code"]), ("success", 0))
+        _, kwargs = self.client.load_table_from_json.call_args
+        self.assertEqual(
+            kwargs["job_config"].schema, list(AUDIT_TABLE_SPEC.schema)
+        )
+        created = self.client.create_table.call_args_list[-1].args[0]
+        self.assertEqual(created.schema, list(AUDIT_TABLE_SPEC.schema))
+
+    def test_unexpected_error_is_audited_and_keeps_its_traceback(
+        self,
+    ) -> None:
+        self.enable_audit()
+        # Every table is missing: the load stops before any row count.
+        self.client.get_table.side_effect = NotFound("no table")
+        self.client.load_table_from_file.side_effect = RuntimeError("bug")
+
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, RuntimeError)
+        (row,) = self.audit_rows()
+        self.assertEqual(
+            (row["exit_code"], row["category"], row["failed_stage"]),
+            (1, "internal", "load"),
+        )
+
+    def test_audit_bug_still_logs_the_summary(self) -> None:
+        self.enable_audit().result.side_effect = RuntimeError("audit bug")
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIsInstance(result.exception, RuntimeError)
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["event"], summary["exit_code"], summary["category"]),
+            ("run_finished", 1, "internal"),
+        )
+
+    def test_missing_credentials_for_the_audit_exit_with_eight(self) -> None:
+        self.enable_audit()
+        self.client_factory.side_effect = DefaultCredentialsError("no ADC")
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 8)
+        (failure,) = self.events(result)[1:]
+        self.assertEqual(
+            (failure["event"], failure["error"]), ("audit_failed", "no ADC")
+        )
+        self.assertEqual(self.summary(result)["category"], "audit")
+
+    def test_audit_appends_a_failed_run(self) -> None:
+        self.enable_audit()
+
+        result = self.invoke("run", self.gated_library(0.5))
+
+        self.assertEqual(result.exit_code, 7)
+        (row,) = self.audit_rows()
+        self.assert_row_is_the_summary(row, result)
+        self.assertEqual(
+            (row["exit_code"], row["failed_stage"]), (7, "transform")
+        )
+
+    def test_audit_appends_a_stage_command(self) -> None:
+        self.enable_audit()
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        (row,) = self.audit_rows()
+        self.assertEqual(row["command"], "extract")
+        self.client.load_table_from_file.assert_not_called()
+
+    def test_failed_audit_of_a_successful_run_exits_with_eight(self) -> None:
+        self.enable_audit().result.side_effect = Forbidden("no access")
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 8)
+        (failure,) = self.events(result)[1:]
+        self.assertEqual(failure["event"], "audit_failed")
+        self.assertIn("403 no access", failure["error"])
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["outcome"], summary["exit_code"], summary["category"]),
+            ("failed", 8, "audit"),
+        )
+        self.assertEqual(summary["run_id"], failure["run_id"])
+
+    def test_failed_audit_of_a_failed_run_keeps_its_exit_code(self) -> None:
+        self.enable_audit().result.side_effect = Forbidden("no access")
+
+        result = self.invoke("run", self.gated_library(0.5))
+
+        self.assertEqual(result.exit_code, 7)
+        self.assertEqual(
+            [event["event"] for event in self.events(result)][-2:],
+            ["run_failed", "audit_failed"],
+        )
+        self.assertEqual(self.summary(result)["exit_code"], 7)
+
+    def test_invalid_audit_setting_is_a_config_error(self) -> None:
+        self.enable_audit()
+        os.environ["BQ_AUDIT_TABLE"] = "Bad-Name"
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 3)
+        (failure,) = self.events(result)
+        self.assertTrue(failure["error"].startswith("BQ_AUDIT_TABLE: "))
+        self.assertIsNone(self.summary(result)["dataset"])
+        self.client.load_table_from_json.assert_not_called()
+        self.assertFalse((self.directory / "data").exists())
 
     def test_every_pipeline_command_is_summarized(self) -> None:
         self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)

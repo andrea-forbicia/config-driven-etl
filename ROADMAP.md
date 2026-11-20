@@ -268,21 +268,23 @@ additive outputs, so the phase is a MINOR change.
 - [x] Run summary: a `run_id`, the package version, start time, per-stage
       row counts and durations, outcome and exit code, collected by
       `pipeline.py` and logged as one final JSON line `[feat]`
-- [ ] Optional `target.audit_table`: append the run summary with a load
-      job (`WRITE_APPEND`, explicit schema from `bq_schema.py`), also when
-      the run fails after the config is valid. Decide first whether an
-      audit load failure changes the run's exit code, and whether the
-      table is per dataset or shared through a setting `[feat]`
+- [x] Optional audit table, shared by every dataset through the
+      `BQ_AUDIT_TABLE` setting (environment-level, like `BQ_DATASET`):
+      append the run summary with a load job (`WRITE_APPEND`, explicit
+      schema from `bq_schema.py`) for every pipeline command, also when it
+      fails. A failed append turns a successful run into exit code 8; a
+      failed run keeps its own code `[feat]`
 - [ ] System tests for a run blocked by the gate and for the audit row of
       a successful and a failed run; `gcp` test appends to a temporary
-      audit table; use both options in at least one real dataset `[test]`
+      audit table; use `max_rejected_ratio` in at least one real dataset
+      `[test]`
 - [ ] Release `v1.4.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
 
 Exit: a fixture above its `max_rejected_ratio` exits with the gate's code
-and leaves the BigQuery tables untouched; every `run` with `audit_table`
-set appends exactly one row, success or failure; the GitHub Release for
-`v1.4.0` exists.
+and leaves the BigQuery tables untouched; every `run` with
+`BQ_AUDIT_TABLE` set appends exactly one row, success or failure; the
+GitHub Release for `v1.4.0` exists.
 
 ## Ideas
 
