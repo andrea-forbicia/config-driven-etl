@@ -293,6 +293,11 @@ Not planned into a phase yet.
 - `rules.min_rows`: fail before any load when the source has fewer rows,
   so a source that returns only its header cannot empty a good table.
   `max_rejected_ratio` lets an empty source pass by design.
+- `LOG_FORMAT` setting: `json` (default, one JSON line per event, as
+  today) or `pretty`, one aligned text line per event for reading in a
+  terminal. Opt-in only, never chosen from whether stderr is a terminal,
+  so the same command always logs the same way and log collectors keep
+  getting JSON.
 
 ## Definition of done
 
