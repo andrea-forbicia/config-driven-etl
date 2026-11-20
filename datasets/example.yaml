@@ -137,6 +137,12 @@ rules:
   # data. Optional: without it, any share is accepted.
   max_rejected_ratio: 0.05
 
+  # Fewest valid rows a run will accept, an integer of at least 1. Valid
+  # rows are the ones that would be loaded, so a source with only its
+  # header and a source whose rows are all rejected both fall short.
+  # Validated only, not enforced yet. Optional, no default.
+  min_rows: 100
+
 # BigQuery destination. Required.
 target:
   # Table name inside the BQ_DATASET dataset. Required.

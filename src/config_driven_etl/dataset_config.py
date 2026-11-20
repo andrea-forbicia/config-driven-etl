@@ -377,6 +377,8 @@ class Rules(_StrictModel):
     max_rejected_ratio: float | None = Field(
         default=None, ge=0, le=1, strict=True
     )
+    # Strict, so YAML `yes` is not read as 1; 0 would never stop a run.
+    min_rows: int | None = Field(default=None, ge=1, strict=True)
 
 
 class Target(_StrictModel):

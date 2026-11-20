@@ -292,7 +292,7 @@ Goal: a source that returns too few rows cannot empty a good table, and
 a run can be followed comfortably in a terminal. Both are optional
 config or settings, so the phase is a MINOR change.
 
-- [ ] Optional `rules.min_rows` (a positive integer) in the config:
+- [x] Optional `rules.min_rows` (a positive integer) in the config:
       validated, documented in `datasets/example.yaml`. Decide first
       whether it counts the rows read or the valid rows `[feat]`
 - [ ] Enforce it in the `transform` stage next to `max_rejected_ratio`,

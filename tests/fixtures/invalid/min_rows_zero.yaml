@@ -1,0 +1,12 @@
+# Invalid: a minimum of zero rows would never stop a run.
+name: min_rows_zero
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+rules:
+  min_rows: 0
+target:
+  table: sample

@@ -63,6 +63,7 @@ def full_config() -> dict[str, Any]:
             "deduplicate_on": ["observation_date", "station_id"],
             "drop_unmapped_columns": False,
             "max_rejected_ratio": 0.05,
+            "min_rows": 100,
         },
         "target": {
             "table": "city_weather",
@@ -91,6 +92,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         self.assertEqual(config.rules.deduplicate_on, ())
         self.assertTrue(config.rules.drop_unmapped_columns)
         self.assertIsNone(config.rules.max_rejected_ratio)
+        self.assertIsNone(config.rules.min_rows)
         self.assertIsNone(config.target.partition_by)
         self.assertEqual(config.target.cluster_by, ())
         self.assertEqual(config.target.write_mode, "truncate")
@@ -115,6 +117,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         )
         self.assertFalse(config.rules.drop_unmapped_columns)
         self.assertEqual(config.rules.max_rejected_ratio, 0.05)
+        self.assertEqual(config.rules.min_rows, 100)
         self.assertEqual(config.target.partition_by, "observation_date")
         self.assertEqual(config.target.cluster_by, ("station_id",))
         self.assertEqual(config.target.rejected_table, "city_weather_rejected")
@@ -146,6 +149,14 @@ class DatasetConfigValidTest(unittest.TestCase):
                 config = DatasetConfig.model_validate(data)
 
                 self.assertEqual(config.rules.max_rejected_ratio, value)
+
+    def test_min_rows_accepts_one(self) -> None:
+        data = minimal_config()
+        data["rules"] = {"min_rows": 1}
+
+        config = DatasetConfig.model_validate(data)
+
+        self.assertEqual(config.rules.min_rows, 1)
 
     def test_config_is_immutable(self) -> None:
         config = DatasetConfig.model_validate(minimal_config())
@@ -304,6 +315,16 @@ class DatasetConfigInvalidTest(unittest.TestCase):
                 data["rules"] = {"max_rejected_ratio": value}
 
                 self.assert_invalid(data, ("rules", "max_rejected_ratio"))
+
+    def test_invalid_min_rows(self) -> None:
+        # Zero and negatives, a fraction, and YAML values that a lax int
+        # would coerce (true, a quoted number, a whole float).
+        for value in [0, -1, 1.5, True, "10", 10.0]:
+            with self.subTest(value=value):
+                data = minimal_config()
+                data["rules"] = {"min_rows": value}
+
+                self.assert_invalid(data, ("rules", "min_rows"))
 
     def test_unsupported_write_mode(self) -> None:
         data = minimal_config()
