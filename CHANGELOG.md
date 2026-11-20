@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Optional `rules.min_rows` in the dataset config: the fewest valid rows
+  (the rows that would be loaded) a run accepts. Below it, the
+  `transform` stage behaves as for `max_rejected_ratio`: rejected rows
+  written, no valid Parquet, exit code 7, BigQuery tables untouched. It
+  stops a source that returns only its header, which
+  `max_rejected_ratio` lets pass, and a source whose rows are all
+  rejected. When both gates fail, the message gives both reasons.
+
+### Changed
+
+- The `--help` text of exit code 7 now reads "data failed a quality
+  gate, nothing loaded", as it covers both gates.
+
 ## [1.4.0] - 2026-11-20
 
 ### Added

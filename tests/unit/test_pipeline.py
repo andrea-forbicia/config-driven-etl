@@ -65,11 +65,15 @@ def fake_client(*table_rows: int) -> mock.MagicMock:
     return client
 
 
+def with_rules(config: DatasetConfig, **rules: object) -> DatasetConfig:
+    updated = config.rules.model_copy(update=rules)
+    return config.model_copy(update={"rules": updated})
+
+
 def with_max_rejected_ratio(
     config: DatasetConfig, limit: float
 ) -> DatasetConfig:
-    rules = config.rules.model_copy(update={"max_rejected_ratio": limit})
-    return config.model_copy(update={"rules": rules})
+    return with_rules(config, max_rejected_ratio=limit)
 
 
 def without_rejected_table(config: DatasetConfig) -> DatasetConfig:
@@ -221,7 +225,7 @@ class TransformDatasetTest(PipelineTestCase):
             transform_dataset(fixture_config("sensor_readings"), self.data_dir)
 
 
-class RejectedRatioGateTest(PipelineTestCase):
+class QualityGateTest(PipelineTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.config = fixture_config("library_loans")
@@ -310,6 +314,68 @@ class RejectedRatioGateTest(PipelineTestCase):
 
         self.assertEqual((result.rows_in, result.rows_rejected), (0, 0))
         self.assertEqual(pl.read_parquet(self.valid_path).height, 0)
+
+    def test_valid_rows_equal_to_min_rows_pass(self) -> None:
+        config = with_rules(self.config, min_rows=LOANS.rows_valid)
+
+        result = transform_dataset(config, self.data_dir)
+
+        self.assertEqual(result.rows_out, LOANS.rows_valid)
+        self.assertTrue(self.valid_path.is_file())
+
+    def test_fewer_valid_rows_than_min_rows_fail(self) -> None:
+        transform_dataset(self.config, self.data_dir)
+        config = with_rules(self.config, min_rows=LOANS.rows_valid + 1)
+
+        with self.assertRaises(QualityGateError) as context:
+            transform_dataset(config, self.data_dir)
+
+        self.assertEqual(
+            str(context.exception),
+            f"library_loans: {LOANS.rows_valid} valid rows, below "
+            f"rules.min_rows {LOANS.rows_valid + 1}; valid rows not "
+            "written, rejected rows written",
+        )
+        self.assertEqual(
+            sorted(self.valid_path.parent.iterdir()), [self.rejected_path]
+        )
+
+    def test_header_only_source_fails_min_rows(self) -> None:
+        header, *_ = self.fixture_lines()
+        # The ratio alone lets an empty source pass.
+        config = with_rules(
+            self.with_source(header + b"\n"),
+            max_rejected_ratio=0.0,
+            min_rows=1,
+        )
+
+        with self.assertRaises(QualityGateError) as context:
+            transform_dataset(config, self.data_dir)
+
+        self.assertIn(
+            "0 valid rows, below rules.min_rows 1", str(context.exception)
+        )
+        self.assertNotIn("max_rejected_ratio", str(context.exception))
+        self.assertFalse(self.valid_path.exists())
+
+    def test_both_gates_failing_give_both_reasons(self) -> None:
+        config = with_rules(
+            self.config,
+            max_rejected_ratio=0.5,
+            min_rows=LOANS.rows_valid + 1,
+        )
+
+        with self.assertRaises(QualityGateError) as context:
+            transform_dataset(config, self.data_dir)
+
+        self.assertEqual(
+            str(context.exception),
+            f"library_loans: {LOANS.rows_rejected} of {LOANS.rows_in} rows "
+            f"rejected (ratio {self.ratio:.4g}), above "
+            f"rules.max_rejected_ratio 0.5; {LOANS.rows_valid} valid rows, "
+            f"below rules.min_rows {LOANS.rows_valid + 1}; valid rows not "
+            "written, rejected rows written",
+        )
 
     def test_previous_output_that_cannot_be_removed_is_a_load_error(
         self,

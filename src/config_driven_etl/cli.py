@@ -71,7 +71,7 @@ _EXIT_CODE_HELP = {
     ExitCode.EXTRACT: "source unreachable or raw CSV unreadable",
     ExitCode.TRANSFORM: "data does not match the dataset config",
     ExitCode.LOAD: "Parquet output or BigQuery load failed",
-    ExitCode.QUALITY_GATE: "too many rejected rows, nothing loaded",
+    ExitCode.QUALITY_GATE: "data failed a quality gate, nothing loaded",
     ExitCode.AUDIT: "run succeeded, audit row not appended",
 }
 
