@@ -155,7 +155,8 @@ def verify_table_rows(
     if table.num_rows == expected_rows:
         return
     message = (
-        f"{table_id}: {table.num_rows} rows loaded, expected {expected_rows}"
+        f"{table_label(table_id)}: {table.num_rows} rows loaded, "
+        f"expected {expected_rows}"
     )
     # BigQuery drops rows whose partition is already past its expiration
     # without failing the job; the sandbox expires partitions after 60
@@ -208,6 +209,13 @@ def bigquery_table_id(project: str, dataset: str, table: str) -> str:
     return f"{project}.{dataset}.{table}"
 
 
+def table_label(table_id: str) -> str:
+    """The table id without its project, for messages that get logged."""
+    # The project id is a setting, and settings never reach the logs.
+    # From the right: a legacy project id can contain dots.
+    return ".".join(table_id.rsplit(".", 2)[-2:])
+
+
 def ensure_table(
     client: bigquery.Client, table_id: str, spec: TableSpec
 ) -> None:
@@ -231,9 +239,10 @@ def ensure_table(
 
     problems = _layout_problems(existing, spec)
     if problems:
+        label = table_label(table_id)
         raise LoadError(
-            "\n".join(f"{table_id}: {problem}" for problem in problems)
-            + f"\n{table_id}: delete the table to recreate it"
+            "\n".join(f"{label}: {problem}" for problem in problems)
+            + f"\n{label}: delete the table to recreate it"
         )
 
 
@@ -301,7 +310,7 @@ def append_rows(
         job.result()
     if job.output_rows != len(rows):
         raise LoadError(
-            f"{table_id}: {job.output_rows} rows appended, "
+            f"{table_label(table_id)}: {job.output_rows} rows appended, "
             f"expected {len(rows)}"
         )
 
@@ -346,26 +355,36 @@ def _layout_problems(table: bigquery.Table, spec: TableSpec) -> list[str]:
 
 @contextmanager
 def _bigquery_errors(table_id: str) -> Generator[None]:
-    """Turn Google API, auth and network errors into LoadError."""
+    """Turn Google API, auth and network errors into LoadError.
+
+    The project id is removed from the message: Google often quotes it,
+    for example in the request URL.
+    """
+    label = table_label(table_id)
+    project = table_id.removesuffix(f".{label}")
+
+    def reason(error: Exception) -> str:
+        return error_reason(error).replace(project, "<project>")
+
     try:
         yield
     except GoogleAPIError as error:
-        lines = [f"BigQuery error: {error_reason(error)}"]
+        lines = [f"BigQuery error: {reason(error)}"]
         # A failed load job puts the actual causes, such as the bad column,
         # in errors rather than in the message.
         details = getattr(error, "errors", None) or []
         lines += [
-            f"  {detail['message']}"
+            f"  {detail['message'].replace(project, '<project>')}"
             for detail in details[:_MAX_ERROR_DETAILS]
             if isinstance(detail, dict) and detail.get("message")
         ]
         raise LoadError(
-            "\n".join(f"{table_id}: {line}" for line in lines)
+            "\n".join(f"{label}: {line}" for line in lines)
         ) from error
     except (GoogleAuthError, requests.RequestException) as error:
         # Credentials and the network fail outside the API error types.
         raise LoadError(
-            f"{table_id}: cannot reach BigQuery: {error_reason(error)}"
+            f"{label}: cannot reach BigQuery: {reason(error)}"
         ) from error
 
 

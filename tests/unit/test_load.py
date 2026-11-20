@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 from typing import IO
@@ -31,6 +32,7 @@ from config_driven_etl.load import (
     parquet_row_count,
     processed_parquet_path,
     rejected_parquet_path,
+    table_label,
     verify_parquet,
     verify_table_rows,
     write_parquet,
@@ -490,6 +492,8 @@ class FixtureParquetTest(unittest.TestCase):
 
 
 TABLE_ID = "project.dataset.sample"
+# Messages name the table without its project.
+TABLE_LABEL = "dataset.sample"
 
 
 def target_config(
@@ -632,8 +636,8 @@ class EnsureTableTest(unittest.TestCase):
                 self.assertEqual(
                     str(context.exception).splitlines(),
                     [
-                        f"{TABLE_ID}: {problem}",
-                        f"{TABLE_ID}: delete the table to recreate it",
+                        f"{TABLE_LABEL}: {problem}",
+                        f"{TABLE_LABEL}: delete the table to recreate it",
                     ],
                 )
                 self.client.create_table.assert_not_called()
@@ -651,9 +655,9 @@ class EnsureTableTest(unittest.TestCase):
         self.assertEqual(
             str(context.exception).splitlines(),
             [
-                f"{TABLE_ID}: partitioned by d, config says nothing",
-                f"{TABLE_ID}: clustered by ['s'], config says nothing",
-                f"{TABLE_ID}: delete the table to recreate it",
+                f"{TABLE_LABEL}: partitioned by d, config says nothing",
+                f"{TABLE_LABEL}: clustered by ['s'], config says nothing",
+                f"{TABLE_LABEL}: delete the table to recreate it",
             ],
         )
 
@@ -676,7 +680,7 @@ class EnsureTableTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            f"{TABLE_ID}: BigQuery error: 403 access denied",
+            f"{TABLE_LABEL}: BigQuery error: 403 access denied",
         )
 
     def test_auth_and_network_errors_become_load_errors(self) -> None:
@@ -692,7 +696,7 @@ class EnsureTableTest(unittest.TestCase):
 
                 self.assertEqual(
                     str(context.exception),
-                    f"{TABLE_ID}: cannot reach BigQuery: {error}",
+                    f"{TABLE_LABEL}: cannot reach BigQuery: {error}",
                 )
 
     def test_api_error_details_are_listed(self) -> None:
@@ -709,10 +713,10 @@ class EnsureTableTest(unittest.TestCase):
         self.assertEqual(
             str(context.exception).splitlines(),
             [
-                f"{TABLE_ID}: BigQuery error: 403 access denied",
-                f"{TABLE_ID}:   cause 0",
-                f"{TABLE_ID}:   cause 1",
-                f"{TABLE_ID}:   cause 2",
+                f"{TABLE_LABEL}: BigQuery error: 403 access denied",
+                f"{TABLE_LABEL}:   cause 0",
+                f"{TABLE_LABEL}:   cause 1",
+                f"{TABLE_LABEL}:   cause 2",
             ],
         )
 
@@ -810,7 +814,7 @@ class LoadParquetTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            f"{TABLE_ID}: BigQuery error: 400 Error while reading data",
+            f"{TABLE_LABEL}: BigQuery error: 400 Error while reading data",
         )
 
     def test_missing_file_raises_load_error(self) -> None:
@@ -877,7 +881,7 @@ class VerifyTableRowsTest(unittest.TestCase):
             verify_table_rows(self.client, TABLE_ID, 4)
 
         self.assertEqual(
-            str(context.exception), f"{TABLE_ID}: 3 rows loaded, expected 4"
+            str(context.exception), f"{TABLE_LABEL}: 3 rows loaded, expected 4"
         )
 
     def test_partitioned_table_mentions_partition_expiration(self) -> None:
@@ -888,7 +892,7 @@ class VerifyTableRowsTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            f"{TABLE_ID}: 0 rows loaded, expected 4; rows in partitions "
+            f"{TABLE_LABEL}: 0 rows loaded, expected 4; rows in partitions "
             "older than the partition expiration are dropped (60 days in "
             "the BigQuery sandbox)",
         )
@@ -901,7 +905,7 @@ class VerifyTableRowsTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            f"{TABLE_ID}: None rows loaded, expected 4",
+            f"{TABLE_LABEL}: None rows loaded, expected 4",
         )
 
     def test_api_errors_become_load_errors(self) -> None:
@@ -912,7 +916,7 @@ class VerifyTableRowsTest(unittest.TestCase):
 
         self.assertEqual(
             str(context.exception),
-            f"{TABLE_ID}: BigQuery error: 404 no such table",
+            f"{TABLE_LABEL}: BigQuery error: 404 no such table",
         )
 
 
@@ -948,7 +952,7 @@ class AppendRowsTest(unittest.TestCase):
         self.job.output_rows = 1
 
         with self.assertRaisesRegex(
-            LoadError, f"^{TABLE_ID}: 1 rows appended, expected 2$"
+            LoadError, f"^{TABLE_LABEL}: 1 rows appended, expected 2$"
         ):
             append_rows(self.client, TABLE_ID, target_spec(), self.ROWS)
 
@@ -957,6 +961,99 @@ class AppendRowsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(LoadError, "bad row"):
             append_rows(self.client, TABLE_ID, target_spec(), self.ROWS)
+
+
+class ErrorsNeverNameTheProjectTest(unittest.TestCase):
+    """Load errors are logged, and the project id is a setting."""
+
+    PROJECT = "secret-project-4f1c"
+    TABLE = f"{PROJECT}.dataset.sample"
+
+    def setUp(self) -> None:
+        self.client = fake_client()
+
+    def assert_hides_the_project(self, error: LoadError) -> None:
+        message = str(error)
+        self.assertNotIn(self.PROJECT, message)
+        self.assertTrue(message.startswith("dataset.sample: "), message)
+
+    def failure(self, call: Callable[[], object]) -> LoadError:
+        with self.assertRaises(LoadError) as context:
+            call()
+        return context.exception
+
+    def test_api_error_text_is_scrubbed(self) -> None:
+        self.client.get_table.side_effect = Forbidden(
+            f"GET https://bigquery.googleapis.com/bigquery/v2/projects/"
+            f"{self.PROJECT}/datasets/dataset/tables/sample: denied"
+        )
+
+        error = self.failure(
+            lambda: verify_table_rows(self.client, self.TABLE, 1)
+        )
+
+        self.assert_hides_the_project(error)
+        self.assertIn("projects/<project>/datasets", str(error))
+
+    def test_label_keeps_a_dataset_named_like_the_project(self) -> None:
+        table = "etlproj.etlproj_data.sample"
+        self.client.get_table.side_effect = Forbidden(
+            "projects/etlproj: denied"
+        )
+
+        error = self.failure(lambda: verify_table_rows(self.client, table, 1))
+
+        self.assertEqual(
+            str(error),
+            "etlproj_data.sample: BigQuery error: "
+            "403 projects/<project>: denied",
+        )
+
+    def test_label_of_a_legacy_project_with_a_domain(self) -> None:
+        self.assertEqual(
+            table_label("example.com:proj.dataset.sample"), "dataset.sample"
+        )
+
+    def test_network_error(self) -> None:
+        self.client.get_table.side_effect = requests.ConnectionError(
+            f"cannot connect for {self.PROJECT}"
+        )
+
+        self.assert_hides_the_project(
+            self.failure(lambda: verify_table_rows(self.client, self.TABLE, 1))
+        )
+
+    def test_row_count_mismatch(self) -> None:
+        table = mock.create_autospec(bigquery.Table, instance=True)
+        table.num_rows = 2
+        table.time_partitioning = None
+        self.client.get_table.return_value = table
+
+        self.assert_hides_the_project(
+            self.failure(lambda: verify_table_rows(self.client, self.TABLE, 1))
+        )
+
+    def test_layout_mismatch(self) -> None:
+        self.client.get_table.return_value = existing_table(field=None)
+
+        self.assert_hides_the_project(
+            self.failure(
+                lambda: ensure_table(self.client, self.TABLE, target_spec())
+            )
+        )
+
+    def test_append_count_mismatch(self) -> None:
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = 0
+        self.client.load_table_from_json.return_value = job
+
+        self.assert_hides_the_project(
+            self.failure(
+                lambda: append_rows(
+                    self.client, self.TABLE, target_spec(), [{"s": "a"}]
+                )
+            )
+        )
 
 
 if __name__ == "__main__":

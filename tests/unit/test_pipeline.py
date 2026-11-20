@@ -38,8 +38,11 @@ LOANS = OUTCOMES["library_loans"]
 
 VALID_TABLE = "project.dataset.library_loans"
 REJECTED_TABLE = "project.dataset.library_loans_rejected"
+# Messages name tables without their project.
+VALID_LABEL = "dataset.library_loans"
+REJECTED_LABEL = "dataset.library_loans_rejected"
 NOT_LOADED = (
-    f"rejected rows not loaded; {VALID_TABLE} already holds this run's "
+    f"rejected rows not loaded; {VALID_LABEL} already holds this run's "
     "valid rows"
 )
 
@@ -531,7 +534,7 @@ class LoadDatasetTest(PipelineTestCase):
         self.assertEqual(
             str(context.exception).splitlines(),
             [
-                f"{REJECTED_TABLE}: BigQuery error: 400 bad rejected rows",
+                f"{REJECTED_LABEL}: BigQuery error: 400 bad rejected rows",
                 NOT_LOADED,
             ],
         )
@@ -547,7 +550,7 @@ class LoadDatasetTest(PipelineTestCase):
         self.assertEqual(
             str(context.exception).splitlines(),
             [
-                f"{REJECTED_TABLE}: {loaded} rows loaded, "
+                f"{REJECTED_LABEL}: {loaded} rows loaded, "
                 f"expected {LOANS.rows_rejected}",
                 NOT_LOADED,
             ],
@@ -567,8 +570,8 @@ class LoadDatasetTest(PipelineTestCase):
         self.assertEqual(
             str(context.exception).splitlines(),
             [
-                f"{REJECTED_TABLE}: partitioned by x, config says nothing",
-                f"{REJECTED_TABLE}: delete the table to recreate it",
+                f"{REJECTED_LABEL}: partitioned by x, config says nothing",
+                f"{REJECTED_LABEL}: delete the table to recreate it",
             ],
         )
         client.load_table_from_file.assert_not_called()
