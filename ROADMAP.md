@@ -295,7 +295,7 @@ config or settings, so the phase is a MINOR change.
 - [x] Optional `rules.min_rows` (a positive integer) in the config:
       validated, documented in `datasets/example.yaml`. Decide first
       whether it counts the rows read or the valid rows `[feat]`
-- [ ] Enforce it in the `transform` stage next to `max_rejected_ratio`,
+- [x] Enforce it in the `transform` stage next to `max_rejected_ratio`,
       with the same outcome: rejected rows written, valid Parquet removed,
       exit code 7, category `quality_gate`, BigQuery untouched. When both
       gates fail, the message gives both reasons `[feat]`

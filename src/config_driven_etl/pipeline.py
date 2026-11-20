@@ -216,10 +216,11 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
     """Transform the raw CSV and write valid and rejected rows as Parquet.
 
     Both files are verified before either replaces the previous run's.
-    Above rules.max_rejected_ratio, the previous valid output is removed
-    so no later load can use it, only the rejected rows are written, and
-    QualityGateError is raised; if the removal or the write fails, a
-    LoadError that also gives the gate's reason is raised instead.
+    Above rules.max_rejected_ratio or below rules.min_rows, the previous
+    valid output is removed so no later load can use it, only the
+    rejected rows are written, and QualityGateError is raised; if the
+    removal or the write fails, a LoadError that also gives the gate's
+    reason is raised instead.
     """
     raw = raw_csv_path(data_dir, config.name)
     result = transform(scan_raw_csv(raw, config.source), config)
@@ -246,7 +247,7 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
         rejected,
         rejected_schema(config),
     )
-    gate_failure = _rejected_ratio_failure(config, stage)
+    gate_failure = _gate_failure(config, stage)
     if gate_failure is None:
         write_parquet_files(
             [
@@ -274,23 +275,44 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
     )
 
 
+def _gate_failure(config: DatasetConfig, stage: StageResult) -> str | None:
+    """Every quality gate the stage fails, in one message, or None."""
+    reasons = [
+        reason
+        for reason in (
+            _rejected_ratio_failure(config, stage),
+            _min_rows_failure(config, stage),
+        )
+        if reason is not None
+    ]
+    if not reasons:
+        return None
+    return f"{config.name}: {'; '.join(reasons)}"
+
+
 def _rejected_ratio_failure(
     config: DatasetConfig, stage: StageResult
 ) -> str | None:
-    """Why the stage is above rules.max_rejected_ratio, or None."""
     limit = config.rules.max_rejected_ratio
-    # No rows means no rejected rows: an empty source is not this
-    # gate's concern.
+    # No rows means no rejected rows: an empty source is left to
+    # min_rows.
     if limit is None or not stage.rows_in:
         return None
     ratio = stage.rows_rejected / stage.rows_in
     if ratio <= limit:
         return None
     return (
-        f"{config.name}: {stage.rows_rejected} of {stage.rows_in} rows "
-        f"rejected (ratio {ratio:.4g}), above rules.max_rejected_ratio "
-        f"{limit:g}"
+        f"{stage.rows_rejected} of {stage.rows_in} rows rejected "
+        f"(ratio {ratio:.4g}), above rules.max_rejected_ratio {limit:g}"
     )
+
+
+def _min_rows_failure(config: DatasetConfig, stage: StageResult) -> str | None:
+    minimum = config.rules.min_rows
+    # Valid rows, the ones a load would put in the table.
+    if minimum is None or stage.rows_out >= minimum:
+        return None
+    return f"{stage.rows_out} valid rows, below rules.min_rows {minimum}"
 
 
 def load_dataset(
