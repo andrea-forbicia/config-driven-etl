@@ -136,6 +136,7 @@ Dataset-level settings come from the YAML file.
 GCP_PROJECT_ID=
 BQ_DATASET=
 DATA_DIR=./data
+BQ_AUDIT_TABLE=                   # optional, one row per command
 GOOGLE_APPLICATION_CREDENTIALS=   # local only, path outside the repo
 ```
 

@@ -6,6 +6,7 @@ import polars as pl
 from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import (
+    AUDIT_TABLE_SPEC,
     BIGQUERY_TYPES,
     TableSpec,
     bigquery_rejected_schema,
@@ -18,6 +19,7 @@ from config_driven_etl.dataset_config import (
     DatasetConfig,
     load_dataset_config,
 )
+from config_driven_etl.pipeline import RunRecorder, StageResult, audit_row
 from config_driven_etl.transform import rejected_schema
 from fixture_outcomes import OUTCOMES, fixture_config
 
@@ -211,6 +213,41 @@ class RejectedTableSpecTest(unittest.TestCase):
                 partition_by=None,
                 cluster_by=(),
             ),
+        )
+
+
+class AuditTableSpecTest(unittest.TestCase):
+    def test_never_partitioned_or_clustered(self) -> None:
+        self.assertIsNone(AUDIT_TABLE_SPEC.partition_by)
+        self.assertEqual(AUDIT_TABLE_SPEC.cluster_by, ())
+
+    def test_every_audit_row_field_is_in_the_schema(self) -> None:
+        recorder = RunRecorder("run", "1.2.3")
+        recorder.start("transform")
+        recorder.record(
+            "transform",
+            StageResult(
+                rows_in=3,
+                rows_out=2,
+                rows_rejected=1,
+                rejections={"id: null": 1},
+            ),
+            0.5,
+        )
+
+        row = audit_row(recorder.finish(0, None))
+
+        fields = {field.name: field for field in AUDIT_TABLE_SPEC.schema}
+        self.assertEqual(list(row), list(fields))
+        stage_fields = {field.name: field for field in fields["stages"].fields}
+        stages = row["stages"]
+        assert isinstance(stages, list)
+        (stage,) = stages
+        self.assertEqual(list(stage), list(stage_fields))
+        (rejection,) = stage["rejections"]
+        self.assertEqual(
+            list(rejection),
+            [field.name for field in stage_fields["rejections"].fields],
         )
 
 

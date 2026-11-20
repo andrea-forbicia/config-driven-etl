@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from config_driven_etl.settings import Settings
+from config_driven_etl.settings import Settings, SettingsError, load_settings
 
 
 class SettingsTest(unittest.TestCase):
@@ -74,3 +74,57 @@ class SettingsTest(unittest.TestCase):
         self.assertNotIn(
             "google_application_credentials", settings.model_dump()
         )
+
+    def test_audit_table_is_optional(self) -> None:
+        self.assertIsNone(Settings().bq_audit_table)
+
+    def test_empty_audit_table_is_unset(self) -> None:
+        # .env.example ships the key with an empty value.
+        os.environ["BQ_AUDIT_TABLE"] = ""
+
+        self.assertIsNone(load_settings().bq_audit_table)
+
+    def test_reads_the_audit_table(self) -> None:
+        os.environ.update(
+            GCP_PROJECT_ID="my-project",
+            BQ_DATASET="my_dataset",
+            BQ_AUDIT_TABLE="etl_runs",
+        )
+
+        self.assertEqual(load_settings().bq_audit_table, "etl_runs")
+
+    def test_invalid_audit_table_names_the_setting_not_the_value(
+        self,
+    ) -> None:
+        os.environ.update(
+            GCP_PROJECT_ID="secret-project-4f1c",
+            BQ_DATASET="my_dataset",
+            BQ_AUDIT_TABLE="Bad-Name",
+        )
+
+        with self.assertRaises(SettingsError) as context:
+            load_settings()
+
+        message = str(context.exception)
+        self.assertTrue(message.startswith("BQ_AUDIT_TABLE: "), message)
+        self.assertNotIn("Bad-Name", message)
+        self.assertNotIn("secret-project-4f1c", message)
+        self.assertIsNone(context.exception.__cause__)
+
+    def test_audit_table_needs_project_and_dataset(self) -> None:
+        for missing in ["GCP_PROJECT_ID", "BQ_DATASET"]:
+            with self.subTest(missing=missing):
+                os.environ.update(
+                    GCP_PROJECT_ID="my-project",
+                    BQ_DATASET="my_dataset",
+                    BQ_AUDIT_TABLE="etl_runs",
+                )
+                del os.environ[missing]
+
+                with self.assertRaises(SettingsError) as context:
+                    load_settings()
+
+                self.assertEqual(
+                    str(context.exception),
+                    "BQ_AUDIT_TABLE needs GCP_PROJECT_ID and BQ_DATASET",
+                )

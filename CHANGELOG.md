@@ -24,6 +24,16 @@ and this project adheres to
   `category` and `failed_stage` (both null on success), and the row
   counts and duration of each stage that produced them. Stage lines and
   `run_failed` carry the same `run_id`.
+- Optional `BQ_AUDIT_TABLE` setting: a table in `BQ_DATASET`, shared by
+  every dataset, that gets the `run_finished` summary of every pipeline
+  command as one row, failed or not, with a `WRITE_APPEND` load job and
+  an explicit schema (`stages` and their `rejections` as repeated
+  records). If the append fails, a successful command exits with the new
+  code 8 and a failed one keeps its code; both log `audit_failed`. The
+  setting needs `GCP_PROJECT_ID` and `BQ_DATASET`.
+- The `run_finished` summary lists each stage's rejections by reason.
+- An invalid setting now fails with exit code 3 and a message that names
+  the setting, never its value.
 - `load` without the valid Parquet fails with "not found; run transform
   first" instead of a Parquet read error.
 

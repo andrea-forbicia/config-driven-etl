@@ -78,3 +78,52 @@ def bigquery_rejected_schema(
         bigquery.SchemaField("reasons", "STRING", mode="REPEATED"),
         bigquery.SchemaField("raw", "RECORD", mode="REQUIRED", fields=raw),
     ]
+
+
+def _field(
+    name: str,
+    type_: str,
+    mode: str = "REQUIRED",
+    fields: tuple[bigquery.SchemaField, ...] = (),
+) -> bigquery.SchemaField:
+    return bigquery.SchemaField(name, type_, mode=mode, fields=fields)
+
+
+# One row per pipeline command, as built by pipeline.audit_row.
+AUDIT_TABLE_SPEC = TableSpec(
+    schema=(
+        _field("run_id", "STRING"),
+        _field("command", "STRING"),
+        _field("version", "STRING"),
+        _field("dataset", "STRING", "NULLABLE"),
+        _field("started_at", "TIMESTAMP"),
+        _field("duration_s", "FLOAT64"),
+        _field("outcome", "STRING"),
+        _field("exit_code", "INT64"),
+        _field("category", "STRING", "NULLABLE"),
+        _field("failed_stage", "STRING", "NULLABLE"),
+        _field(
+            "stages",
+            "RECORD",
+            "REPEATED",
+            fields=(
+                _field("stage", "STRING"),
+                _field("rows_in", "INT64", "NULLABLE"),
+                _field("rows_out", "INT64"),
+                _field("rows_rejected", "INT64"),
+                _field("duration_s", "FLOAT64"),
+                _field(
+                    "rejections",
+                    "RECORD",
+                    "REPEATED",
+                    fields=(
+                        _field("reason", "STRING"),
+                        _field("rows", "INT64"),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    partition_by=None,
+    cluster_by=(),
+)

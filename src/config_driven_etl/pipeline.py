@@ -140,6 +140,43 @@ class RunRecorder:
         )
 
 
+def audit_row(summary: RunSummary) -> dict[str, object]:
+    """The summary as a JSON-ready row of bq_schema.AUDIT_TABLE_SPEC.
+
+    The run_finished log line logs the same fields, so the two cannot
+    drift apart.
+    """
+    return {
+        "run_id": summary.run_id,
+        "command": summary.command,
+        "version": summary.version,
+        "dataset": summary.dataset,
+        "started_at": summary.started_at.isoformat(timespec="milliseconds"),
+        "duration_s": summary.duration_s,
+        "outcome": summary.outcome,
+        "exit_code": summary.exit_code,
+        "category": summary.category,
+        "failed_stage": summary.failed_stage,
+        "stages": [
+            {
+                "stage": record.stage,
+                "rows_in": record.result.rows_in,
+                "rows_out": record.result.rows_out,
+                "rows_rejected": record.result.rows_rejected,
+                "duration_s": record.duration_s,
+                # BigQuery has no map type: one record per reason.
+                "rejections": [
+                    {"reason": reason, "rows": rows}
+                    for reason, rows in (
+                        record.result.rejections or {}
+                    ).items()
+                ],
+            }
+            for record in summary.stages
+        ],
+    }
+
+
 class QualityGateError(Exception):
     """Data that was read but fails a dataset-wide quality threshold."""
 

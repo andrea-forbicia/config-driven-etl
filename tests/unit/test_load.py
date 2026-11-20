@@ -24,6 +24,7 @@ from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
     LoadError,
     ParquetOutput,
+    append_rows,
     bigquery_table_id,
     ensure_table,
     load_parquet,
@@ -913,6 +914,49 @@ class VerifyTableRowsTest(unittest.TestCase):
             str(context.exception),
             f"{TABLE_ID}: BigQuery error: 404 no such table",
         )
+
+
+class AppendRowsTest(unittest.TestCase):
+    ROWS = [{"s": "a", "d": "2026-11-20"}, {"s": "b", "d": "2026-11-21"}]
+
+    def setUp(self) -> None:
+        self.client = fake_client()
+        self.job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        self.job.output_rows = len(self.ROWS)
+        self.client.load_table_from_json.return_value = self.job
+
+    def test_appends_with_a_json_load_job_and_explicit_schema(self) -> None:
+        append_rows(self.client, TABLE_ID, target_spec(), self.ROWS)
+
+        self.client.load_table_from_json.assert_called_once()
+        (rows, table_id), kwargs = self.client.load_table_from_json.call_args
+        self.assertEqual((rows, table_id), (self.ROWS, TABLE_ID))
+        job_config = kwargs["job_config"]
+        self.assertEqual(
+            job_config.source_format,
+            bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        )
+        self.assertFalse(job_config.autodetect)
+        self.assertEqual(
+            job_config.write_disposition,
+            bigquery.WriteDisposition.WRITE_APPEND,
+        )
+        self.assertEqual(job_config.schema, list(target_spec().schema))
+        self.job.result.assert_called_once_with()
+
+    def test_row_count_mismatch_fails(self) -> None:
+        self.job.output_rows = 1
+
+        with self.assertRaisesRegex(
+            LoadError, f"^{TABLE_ID}: 1 rows appended, expected 2$"
+        ):
+            append_rows(self.client, TABLE_ID, target_spec(), self.ROWS)
+
+    def test_failed_job_is_a_load_error(self) -> None:
+        self.job.result.side_effect = BadRequest("bad row")
+
+        with self.assertRaisesRegex(LoadError, "bad row"):
+            append_rows(self.client, TABLE_ID, target_spec(), self.ROWS)
 
 
 if __name__ == "__main__":
