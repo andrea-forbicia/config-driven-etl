@@ -56,6 +56,9 @@ INVALID_FIXTURES = {
     "rejected_table_same_as_table.yaml": (
         "target.rejected_table: 'loans' is also target.table"
     ),
+    "max_rejected_ratio_as_percent.yaml": (
+        "rules.max_rejected_ratio: Input should be less than or equal to 1"
+    ),
 }
 
 VALID_YAML = """\
