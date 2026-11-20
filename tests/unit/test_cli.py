@@ -427,6 +427,62 @@ class PipelineCommandsTest(unittest.TestCase):
         self.assertEqual(event["category"], "transform")
         self.assertIn("unmapped source column: 'extra'", event["error"])
 
+    def gated_library(self, limit: float) -> str:
+        """The library_loans fixture with rules.max_rejected_ratio set."""
+        fixture = Path(LIBRARY)
+        text = fixture.read_text(encoding="utf-8")
+        csv = (fixture.parent / "library_loans.csv").as_posix()
+        text = text.replace(
+            "path: library_loans.csv", f"path: '{csv}'"
+        ).replace(
+            "drop_unmapped_columns: true",
+            f"drop_unmapped_columns: true\n  max_rejected_ratio: {limit}",
+        )
+        dataset = self.directory / "gated.yaml"
+        dataset.write_text(text, encoding="utf-8")
+        return str(dataset)
+
+    def test_quality_gate_failure_exits_with_seven(self) -> None:
+        dataset = self.gated_library(0.5)
+        self.assertEqual(self.invoke("extract", dataset).exit_code, 0)
+
+        for command in ["transform", "run"]:
+            with self.subTest(command=command):
+                result = self.invoke(command, dataset)
+
+                self.assertEqual(result.exit_code, 7)
+                *_, stage, failure = self.events(result)
+                self.assertEqual(
+                    (stage["event"], stage["stage"]),
+                    ("stage_failed", "transform"),
+                )
+                self.assertEqual(stage["rows_rejected"], LOANS.rows_rejected)
+                self.assertEqual(stage["rejections"], dict(LOANS.rejections))
+                self.assertEqual(
+                    stage["rejected_file"],
+                    "processed/library_loans/library_loans.rejected.parquet",
+                )
+                self.assertEqual(failure["category"], "quality_gate")
+                self.assertIn(
+                    "above rules.max_rejected_ratio 0.5", failure["error"]
+                )
+        self.client_factory.assert_not_called()
+
+    def test_load_after_a_failed_quality_gate_loads_nothing(self) -> None:
+        # A previous run left valid rows that a load could pick up.
+        self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)
+        self.assertEqual(self.invoke("transform", LIBRARY).exit_code, 0)
+        dataset = self.gated_library(0.5)
+        self.assertEqual(self.invoke("transform", dataset).exit_code, 7)
+
+        result = self.invoke("load", dataset)
+
+        self.assertEqual(result.exit_code, 6)
+        self.assertIn(
+            "not found; run transform first", self.events(result)[-1]["error"]
+        )
+        self.client.load_table_from_file.assert_not_called()
+
     def test_bigquery_failure_exits_with_six(self) -> None:
         self.client.get_table.side_effect = Forbidden("access denied")
 

@@ -259,7 +259,7 @@ additive outputs, so the phase is a MINOR change.
 
 - [x] Optional `rules.max_rejected_ratio` (0.0 to 1.0) in the config:
       validated, documented in `datasets/example.yaml` `[feat]`
-- [ ] Enforce the gate after the `transform` stage: above the ratio, the
+- [x] Enforce the gate after the `transform` stage: above the ratio, the
       run fails with a new exit code before any load, so a broken source
       never replaces a good table. The rejected Parquet is still written,
       to explain the failure. Decide first how empty input counts (ratio
@@ -283,6 +283,14 @@ Exit: a fixture above its `max_rejected_ratio` exits with the gate's code
 and leaves the BigQuery tables untouched; every `run` with `audit_table`
 set appends exactly one row, success or failure; the GitHub Release for
 `v1.4.0` exists.
+
+## Ideas
+
+Not planned into a phase yet.
+
+- `rules.min_rows`: fail before any load when the source has fewer rows,
+  so a source that returns only its header cannot empty a good table.
+  `max_rejected_ratio` lets an empty source pass by design.
 
 ## Definition of done
 

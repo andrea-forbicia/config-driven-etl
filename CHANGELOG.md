@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Optional `rules.max_rejected_ratio` in the dataset config, from 0.0 to
+  1.0: the highest share of rejected rows over the rows read. Above it,
+  the `transform` stage (in both `transform` and `run`) writes the
+  rejected rows, writes no valid Parquet and removes the previous one,
+  and exits with the new code 7, so nothing is loaded and the BigQuery
+  tables keep their data. A source with no rows always passes. The
+  transform stage then logs a `stage_failed` line with the usual counts,
+  the rejections by reason and `rejected_file`.
+- `load` without the valid Parquet fails with "not found; run transform
+  first" instead of a Parquet read error.
+
 ## [1.3.0] - 2026-11-19
 
 ### Added

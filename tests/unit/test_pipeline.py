@@ -21,6 +21,7 @@ from config_driven_etl.load import (
     rejected_parquet_path,
 )
 from config_driven_etl.pipeline import (
+    QualityGateError,
     StageResult,
     extract_dataset,
     load_dataset,
@@ -56,6 +57,13 @@ def fake_client(*table_rows: int) -> mock.MagicMock:
         answers.append(table)
     client.get_table.side_effect = answers
     return client
+
+
+def with_max_rejected_ratio(
+    config: DatasetConfig, limit: float
+) -> DatasetConfig:
+    rules = config.rules.model_copy(update={"max_rejected_ratio": limit})
+    return config.model_copy(update={"rules": rules})
 
 
 def without_rejected_table(config: DatasetConfig) -> DatasetConfig:
@@ -207,6 +215,145 @@ class TransformDatasetTest(PipelineTestCase):
             transform_dataset(fixture_config("sensor_readings"), self.data_dir)
 
 
+class RejectedRatioGateTest(PipelineTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.config = fixture_config("library_loans")
+        extract_dataset(self.config, self.data_dir, self.session)
+        self.valid_path = processed_parquet_path(
+            self.data_dir, self.config.name
+        )
+        self.rejected_path = rejected_parquet_path(
+            self.data_dir, self.config.name
+        )
+        self.ratio = LOANS.rows_rejected / LOANS.rows_in
+
+    def with_source(self, csv: bytes) -> DatasetConfig:
+        path = self.data_dir / "source.csv"
+        path.write_bytes(csv)
+        source = self.config.source.model_copy(update={"path": path})
+        config = self.config.model_copy(update={"source": source})
+        extract_dataset(config, self.data_dir, self.session)
+        return config
+
+    def fixture_lines(self) -> list[bytes]:
+        source = self.config.source.path
+        assert source is not None
+        # Bytes, so the copy keeps the fixture's encoding.
+        return source.read_bytes().split(b"\n")
+
+    def test_ratio_equal_to_the_limit_passes(self) -> None:
+        config = with_max_rejected_ratio(self.config, self.ratio)
+
+        result = transform_dataset(config, self.data_dir)
+
+        self.assertEqual(result.rows_rejected, LOANS.rows_rejected)
+        self.assertTrue(self.valid_path.is_file())
+
+    def test_ratio_above_the_limit_fails_and_writes_no_valid_rows(
+        self,
+    ) -> None:
+        # The previous run's valid output must not survive the failure.
+        transform_dataset(self.config, self.data_dir)
+        config = with_max_rejected_ratio(self.config, 0.5)
+
+        with self.assertRaises(QualityGateError) as context:
+            transform_dataset(config, self.data_dir)
+
+        self.assertEqual(
+            str(context.exception),
+            f"library_loans: {LOANS.rows_rejected} of {LOANS.rows_in} rows "
+            f"rejected (ratio {self.ratio:.4g}), above "
+            "rules.max_rejected_ratio 0.5; valid rows not written, "
+            "rejected rows written",
+        )
+        self.assertEqual(
+            sorted(self.valid_path.parent.iterdir()), [self.rejected_path]
+        )
+        rejected = pl.read_parquet(self.rejected_path)
+        self.assertEqual(rejected.height, LOANS.rows_rejected)
+        self.assertEqual(rejected.schema, rejected_schema(config))
+
+    def test_zero_limit_fails_on_any_rejected_row(self) -> None:
+        config = with_max_rejected_ratio(self.config, 0.0)
+
+        with self.assertRaises(QualityGateError) as context:
+            transform_dataset(config, self.data_dir)
+
+        self.assertEqual(
+            context.exception.result.rows_rejected, LOANS.rows_rejected
+        )
+        self.assertEqual(context.exception.result.rejections, LOANS.rejections)
+        self.assertFalse(self.valid_path.exists())
+
+    def test_zero_limit_passes_without_rejected_rows(self) -> None:
+        header, first, *_ = self.fixture_lines()
+        config = with_max_rejected_ratio(
+            self.with_source(header + b"\n" + first + b"\n"), 0.0
+        )
+
+        result = transform_dataset(config, self.data_dir)
+
+        self.assertEqual((result.rows_out, result.rows_rejected), (1, 0))
+
+    def test_empty_source_passes_any_limit(self) -> None:
+        header, *_ = self.fixture_lines()
+        config = with_max_rejected_ratio(self.with_source(header + b"\n"), 0.0)
+
+        result = transform_dataset(config, self.data_dir)
+
+        self.assertEqual((result.rows_in, result.rows_rejected), (0, 0))
+        self.assertEqual(pl.read_parquet(self.valid_path).height, 0)
+
+    def test_previous_output_that_cannot_be_removed_is_a_load_error(
+        self,
+    ) -> None:
+        transform_dataset(self.config, self.data_dir)
+        config = with_max_rejected_ratio(self.config, 0.5)
+        unlink = Path.unlink
+
+        def fail_on_valid_output(path: Path, missing_ok: bool = False) -> None:
+            if path == self.valid_path:
+                raise PermissionError("file in use")
+            unlink(path, missing_ok=missing_ok)
+
+        with (
+            mock.patch.object(
+                Path, "unlink", autospec=True, side_effect=fail_on_valid_output
+            ),
+            self.assertRaises(LoadError) as context,
+        ):
+            transform_dataset(config, self.data_dir)
+
+        message = str(context.exception)
+        self.assertIn("above rules.max_rejected_ratio 0.5\n", message)
+        self.assertIn(
+            f"{self.valid_path}: cannot remove the previous valid rows, a "
+            "later load would use them: file in use",
+            message,
+        )
+
+    def test_failed_rejected_write_leaves_no_valid_rows(self) -> None:
+        transform_dataset(self.config, self.data_dir)
+        config = with_max_rejected_ratio(self.config, 0.5)
+
+        with (
+            mock.patch(
+                "config_driven_etl.pipeline.write_parquet_files",
+                side_effect=LoadError("x: cannot write Parquet: disk full"),
+            ),
+            self.assertRaises(LoadError) as context,
+        ):
+            transform_dataset(config, self.data_dir)
+
+        self.assertRegex(
+            str(context.exception),
+            r"above rules\.max_rejected_ratio 0\.5\n"
+            r"x: cannot write Parquet: disk full$",
+        )
+        self.assertFalse(self.valid_path.exists())
+
+
 class LoadDatasetTest(PipelineTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -327,6 +474,23 @@ class LoadDatasetTest(PipelineTestCase):
                 f"{REJECTED_TABLE}: delete the table to recreate it",
             ],
         )
+        client.load_table_from_file.assert_not_called()
+
+    def test_missing_valid_file_fails_before_any_load(self) -> None:
+        # What a failed quality gate leaves behind.
+        path = processed_parquet_path(self.data_dir, self.config.name)
+        path.unlink()
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(self.config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception),
+            f"{path}: not found; run transform first (a failed quality "
+            "gate removes it)",
+        )
+        client.get_table.assert_not_called()
         client.load_table_from_file.assert_not_called()
 
     def test_missing_rejected_file_fails_before_any_load(self) -> None:
