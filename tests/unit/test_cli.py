@@ -61,6 +61,9 @@ INVALID_FIXTURES = {
     "max_rejected_ratio_as_percent.yaml": (
         "rules.max_rejected_ratio: Input should be less than or equal to 1"
     ),
+    "min_rows_zero.yaml": (
+        "rules.min_rows: Input should be greater than or equal to 1"
+    ),
 }
 
 VALID_YAML = """\
