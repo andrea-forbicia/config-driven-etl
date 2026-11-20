@@ -11,6 +11,7 @@ from typing import IO, Any
 from unittest import mock
 
 import polars as pl
+import yaml
 from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 from typer.testing import CliRunner, Result
@@ -33,6 +34,8 @@ class FakeBigQuery:
         self.tables: dict[str, bigquery.Table] = {}
         self.data: dict[str, pl.DataFrame] = {}
         self.job_configs: list[bigquery.LoadJobConfig] = []
+        # Rows appended with load_table_from_json, per table.
+        self.appended: dict[str, list[dict[str, Any]]] = {}
 
     def __enter__(self) -> "FakeBigQuery":
         return self
@@ -65,6 +68,22 @@ class FakeBigQuery:
         # WRITE_TRUNCATE: the file replaces whatever the table held.
         self.data[table_id] = pl.read_parquet(io.BytesIO(file.read()))
         return mock.create_autospec(bigquery.LoadJob, instance=True)
+
+    def load_table_from_json(
+        self,
+        rows: list[dict[str, Any]],
+        table_id: str,
+        job_config: bigquery.LoadJobConfig,
+    ) -> mock.MagicMock:
+        assert job_config.schema is not None
+        names = [field.name for field in job_config.schema]
+        for row in rows:
+            # What BigQuery would receive: JSON with the schema's fields.
+            assert set(json.loads(json.dumps(row))) == set(names), row
+        self.appended.setdefault(table_id, []).extend(rows)
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = len(rows)
+        return job
 
 
 class RunCommandTest(unittest.TestCase):
@@ -99,6 +118,26 @@ class RunCommandTest(unittest.TestCase):
         result = CliRunner().invoke(app, ["run", str(dataset)])
         self.assertEqual(result.exit_code, 0, result.output)
         return result
+
+    def gated_dataset(self, name: str, limit: float) -> Path:
+        """A copy of a fixture's YAML with rules.max_rejected_ratio set."""
+        config = fixture_config(name)
+        rules = config.rules.model_copy(update={"max_rejected_ratio": limit})
+        # The loaded source path is absolute, so the copy works anywhere.
+        gated = config.model_copy(update={"rules": rules})
+        path = self.directory / f"{name}_gated.yaml"
+        path.write_text(
+            yaml.safe_dump(gated.model_dump(mode="json", exclude_none=True)),
+            encoding="utf-8",
+        )
+        return path
+
+    def summary(self, result: Result) -> dict[str, Any]:
+        """The run_finished line, without the log envelope."""
+        line = json.loads(result.stderr.splitlines()[-1])
+        for key in ["time", "level", "event"]:
+            del line[key]
+        return line
 
     def parquet(self, name: str) -> pl.DataFrame:
         path = self.directory / "data" / "processed" / name / f"{name}.parquet"
@@ -247,6 +286,60 @@ class RunCommandTest(unittest.TestCase):
         path = self.directory / "data" / transform["rejected_file"]
         self.assertTrue(
             pl.read_parquet(path).equals(self.rejected("library_loans"))
+        )
+
+    def test_quality_gate_leaves_the_tables_untouched(self) -> None:
+        self.run_dataset("library_loans")
+        loaded = dict(self.bigquery.data)
+        jobs = len(self.bigquery.job_configs)
+        outcome = OUTCOMES["library_loans"]
+        limit = outcome.rows_rejected / outcome.rows_in / 2
+        dataset = self.gated_dataset("library_loans", limit)
+
+        result = CliRunner().invoke(app, ["run", str(dataset)])
+
+        self.assertEqual(result.exit_code, 7, result.output)
+        # Same data could also mean a second identical load: count jobs.
+        self.assertEqual(len(self.bigquery.job_configs), jobs)
+        self.assertEqual(sorted(self.bigquery.data), sorted(loaded))
+        for table_id, frame in self.bigquery.data.items():
+            with self.subTest(table=table_id):
+                self.assertTrue(frame.equals(loaded[table_id]))
+        directory = self.directory / "data" / "processed" / "library_loans"
+        self.assertEqual(
+            [path.name for path in directory.iterdir()],
+            ["library_loans.rejected.parquet"],
+        )
+        self.assertEqual(
+            self.rejected("library_loans").height, outcome.rows_rejected
+        )
+
+    def test_audit_table_gets_one_row_per_run(self) -> None:
+        os.environ["BQ_AUDIT_TABLE"] = "etl_runs"
+        gated = self.gated_dataset("library_loans", 0.0)
+
+        runs = [
+            self.run_dataset("sensor_readings"),
+            CliRunner().invoke(app, ["run", str(gated)]),
+            self.run_dataset("sensor_readings"),
+        ]
+
+        self.assertEqual([run.exit_code for run in runs], [0, 7, 0])
+        rows = self.bigquery.appended["project.dataset.etl_runs"]
+        self.assertEqual(rows, [self.summary(run) for run in runs])
+        self.assertEqual(
+            [(row["dataset"], row["outcome"]) for row in rows],
+            [
+                ("sensor_readings", "success"),
+                ("library_loans", "failed"),
+                ("sensor_readings", "success"),
+            ],
+        )
+        self.assertEqual(len({row["run_id"] for row in rows}), 3)
+        failed = rows[1]
+        self.assertEqual(
+            (failed["category"], failed["failed_stage"]),
+            ("quality_gate", "transform"),
         )
 
     def test_logs_one_line_per_stage(self) -> None:

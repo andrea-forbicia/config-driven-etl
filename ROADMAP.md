@@ -274,7 +274,7 @@ additive outputs, so the phase is a MINOR change.
       schema from `bq_schema.py`) for every pipeline command, also when it
       fails. A failed append turns a successful run into exit code 8; a
       failed run keeps its own code `[feat]`
-- [ ] System tests for a run blocked by the gate and for the audit row of
+- [x] System tests for a run blocked by the gate and for the audit row of
       a successful and a failed run; `gcp` test appends to a temporary
       audit table; use `max_rejected_ratio` in at least one real dataset
       `[test]`
