@@ -45,7 +45,12 @@ from config_driven_etl.pipeline import (
     load_dataset,
     transform_dataset,
 )
-from config_driven_etl.settings import Settings, SettingsError, load_settings
+from config_driven_etl.settings import (
+    Settings,
+    SettingsError,
+    load_log_format,
+    load_settings,
+)
 from config_driven_etl.transform import TransformError
 
 
@@ -309,7 +314,7 @@ def _counts(result: StageResult) -> dict[str, object]:
 
 @contextmanager
 def _command(command: Command, dataset_file: Path) -> Generator[_Job]:
-    """Read settings and the dataset file, log as JSON, set the exit code.
+    """Read settings and the dataset file, log events, set the exit code.
 
     An expected failure is one error event with its category. Every
     command that ends with an exit code, failed or not, is appended to
@@ -317,7 +322,7 @@ def _command(command: Command, dataset_file: Path) -> Generator[_Job]:
     that summarizes it; an interrupt (Ctrl-C) does neither. Nothing else
     is printed.
     """
-    configure_logging()
+    configure_logging(load_log_format())
     recorder = RunRecorder(command, __version__)
     settings: Settings | None = None
     expected = tuple(kind for kinds, _ in _CATEGORIES for kind in kinds)

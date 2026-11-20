@@ -760,6 +760,42 @@ class PipelineCommandsTest(unittest.TestCase):
         self.client.load_table_from_json.assert_not_called()
         self.assertFalse((self.directory / "data").exists())
 
+    def test_pretty_log_format_writes_one_text_line_per_event(self) -> None:
+        os.environ["LOG_FORMAT"] = "pretty"
+
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stderr.splitlines()
+        self.assertEqual(
+            [line.split()[1] for line in lines],
+            ["extract", "transform", "load", "run"],
+        )
+        self.assertFalse(any(line.startswith("{") for line in lines))
+        self.assertIn("library_loans  success  exit 0", lines[-1])
+        self.assertRegex(lines[-1], r"run [0-9a-f]{32}$")
+        for value in (PROJECT, BQ_DATASET, os.environ["DATA_DIR"]):
+            self.assertNotIn(value, result.stderr)
+
+    def test_invalid_setting_is_reported_in_the_asked_format(self) -> None:
+        os.environ.update(LOG_FORMAT="pretty", BQ_AUDIT_TABLE="Bad-Name")
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 3)
+        error, summary = result.stderr.splitlines()
+        self.assertIn("error      config, exit 3: BQ_AUDIT_TABLE: ", error)
+        self.assertIn("extract    -  failed  exit 3  config", summary)
+
+    def test_invalid_log_format_is_a_config_error_in_json(self) -> None:
+        os.environ["LOG_FORMAT"] = "fancy"
+
+        result = self.invoke("extract", LIBRARY)
+
+        self.assertEqual(result.exit_code, 3)
+        (failure,) = self.events(result)
+        self.assertTrue(failure["error"].startswith("LOG_FORMAT: "))
+
     def test_every_pipeline_command_is_summarized(self) -> None:
         self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)
         self.assertEqual(self.invoke("transform", LIBRARY).exit_code, 0)
