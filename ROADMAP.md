@@ -265,7 +265,7 @@ additive outputs, so the phase is a MINOR change.
       to explain the failure. Decide first how empty input counts (ratio
       undefined) and whether the gate also applies to the standalone
       `transform` command `[feat]`
-- [ ] Run summary: a `run_id`, the package version, start time, per-stage
+- [x] Run summary: a `run_id`, the package version, start time, per-stage
       row counts and durations, outcome and exit code, collected by
       `pipeline.py` and logged as one final JSON line `[feat]`
 - [ ] Optional `target.audit_table`: append the run summary with a load

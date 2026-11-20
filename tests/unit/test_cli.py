@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -256,9 +257,18 @@ class PipelineCommandsTest(unittest.TestCase):
     def invoke(self, *args: str) -> Result:
         return self.runner.invoke(app, list(args))
 
-    def events(self, result: Result) -> list[dict[str, Any]]:
+    def all_events(self, result: Result) -> list[dict[str, Any]]:
         """The JSON events a command logged, one per stderr line."""
         return [json.loads(line) for line in result.stderr.splitlines()]
+
+    def events(self, result: Result) -> list[dict[str, Any]]:
+        """The events before the run_finished line every command ends with."""
+        *events, summary = self.all_events(result)
+        self.assertEqual(summary["event"], "run_finished")
+        return events
+
+    def summary(self, result: Result) -> dict[str, Any]:
+        return self.all_events(result)[-1]
 
     def test_stages_one_by_one(self) -> None:
         data = self.directory / "data"
@@ -403,6 +413,11 @@ class PipelineCommandsTest(unittest.TestCase):
         (event,) = self.events(result)
         self.assertEqual(event["category"], "config")
         self.assertEqual(event["error"], "missing setting: BQ_DATASET")
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["dataset"], summary["stages"], summary["failed_stage"]),
+            ("library_loans", [], None),
+        )
         self.assertFalse((self.directory / "data").exists())
         self.client_factory.assert_not_called()
 
@@ -492,6 +507,14 @@ class PipelineCommandsTest(unittest.TestCase):
         event = self.events(result)[-1]
         self.assertEqual(event["category"], "load")
         self.assertIn("403 access denied", event["error"])
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["category"], summary["failed_stage"]), ("load", "load")
+        )
+        self.assertEqual(
+            [stage["stage"] for stage in summary["stages"]],
+            ["extract", "transform"],
+        )
 
     def test_missing_credentials_exit_with_six(self) -> None:
         self.client_factory.side_effect = DefaultCredentialsError("no ADC")
@@ -510,6 +533,116 @@ class PipelineCommandsTest(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 1)
         self.assertIsInstance(result.exception, RuntimeError)
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["level"], summary["outcome"], summary["exit_code"]),
+            ("error", "failed", 1),
+        )
+        self.assertEqual(
+            [stage["stage"] for stage in summary["stages"]],
+            ["extract", "transform"],
+        )
+
+    def test_successful_run_ends_with_its_summary(self) -> None:
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        stages = self.events(result)
+        summary = self.summary(result)
+        self.assertEqual(summary["level"], "info")
+        self.assertEqual(
+            {
+                key: summary[key]
+                for key in [
+                    "command",
+                    "version",
+                    "dataset",
+                    "outcome",
+                    "exit_code",
+                ]
+            },
+            {
+                "command": "run",
+                "version": __version__,
+                "dataset": "library_loans",
+                "outcome": "success",
+                "exit_code": 0,
+            },
+        )
+        self.assertEqual(
+            (summary["category"], summary["failed_stage"]), (None, None)
+        )
+        self.assertRegex(summary["run_id"], r"^[0-9a-f]{32}$")
+        self.assertEqual(
+            {stage["run_id"] for stage in stages}, {summary["run_id"]}
+        )
+        started_at = datetime.fromisoformat(summary["started_at"])
+        self.assertEqual(started_at.utcoffset(), timedelta(0))
+        self.assertGreaterEqual(summary["duration_s"], 0)
+        keys = ["stage", "rows_in", "rows_out", "rows_rejected", "duration_s"]
+        self.assertEqual(
+            summary["stages"],
+            [{key: stage[key] for key in keys} for stage in stages],
+        )
+
+    def test_every_pipeline_command_is_summarized(self) -> None:
+        self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)
+        self.assertEqual(self.invoke("transform", LIBRARY).exit_code, 0)
+        for command in ["extract", "transform", "load"]:
+            with self.subTest(command=command):
+                result = self.invoke(command, LIBRARY)
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                summary = self.summary(result)
+                self.assertEqual(summary["command"], command)
+                self.assertEqual(
+                    [stage["stage"] for stage in summary["stages"]],
+                    [command],
+                )
+
+    def test_failed_quality_gate_is_summarized_with_its_counts(
+        self,
+    ) -> None:
+        result = self.invoke("run", self.gated_library(0.5))
+
+        self.assertEqual(result.exit_code, 7)
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["level"], summary["outcome"], summary["exit_code"]),
+            ("error", "failed", 7),
+        )
+        _, transform = summary["stages"]
+        self.assertEqual(
+            (transform["stage"], transform["rows_rejected"]),
+            ("transform", LOANS.rows_rejected),
+        )
+        self.assertEqual(
+            (summary["category"], summary["failed_stage"]),
+            ("quality_gate", "transform"),
+        )
+        # Every line of the command, failed ones included, shares run_id.
+        self.assertEqual(
+            {event["run_id"] for event in self.events(result)},
+            {summary["run_id"]},
+        )
+
+    def test_unreadable_dataset_file_is_summarized_without_a_dataset(
+        self,
+    ) -> None:
+        result = self.invoke("load", str(self.directory / "missing.yaml"))
+
+        self.assertEqual(result.exit_code, 3)
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["dataset"], summary["stages"], summary["exit_code"]),
+            (None, [], 3),
+        )
+
+    def test_each_command_has_its_own_run_id(self) -> None:
+        first = self.summary(self.invoke("extract", LIBRARY))
+        second = self.summary(self.invoke("extract", LIBRARY))
+
+        self.assertNotEqual(first["run_id"], second["run_id"])
 
     def test_usage_errors_exit_with_two(self) -> None:
         self.assertEqual(self.invoke("run").exit_code, 2)

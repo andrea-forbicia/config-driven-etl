@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 import unittest
+from datetime import UTC
 from pathlib import Path
 from unittest import mock
 
@@ -22,6 +23,8 @@ from config_driven_etl.load import (
 )
 from config_driven_etl.pipeline import (
     QualityGateError,
+    RunRecorder,
+    StageRecord,
     StageResult,
     extract_dataset,
     load_dataset,
@@ -352,6 +355,100 @@ class RejectedRatioGateTest(PipelineTestCase):
             r"x: cannot write Parquet: disk full$",
         )
         self.assertFalse(self.valid_path.exists())
+
+
+class RunRecorderTest(unittest.TestCase):
+    def test_summary_keeps_the_stages_in_order(self) -> None:
+        recorder = RunRecorder("run", "1.2.3")
+        recorder.dataset = "sample"
+        extract = StageResult(rows_in=None, rows_out=3)
+        transform = StageResult(rows_in=3, rows_out=2, rows_rejected=1)
+        recorder.start("extract")
+        recorder.record("extract", extract, 0.5)
+        recorder.start("transform")
+        recorder.record("transform", transform, 0.25)
+
+        summary = recorder.finish(0, None)
+
+        self.assertEqual(
+            summary.stages,
+            (
+                StageRecord("extract", extract, 0.5),
+                StageRecord("transform", transform, 0.25),
+            ),
+        )
+        self.assertEqual(
+            (
+                summary.run_id,
+                summary.command,
+                summary.version,
+                summary.dataset,
+                summary.exit_code,
+                summary.outcome,
+                summary.category,
+                summary.failed_stage,
+            ),
+            (
+                recorder.run_id,
+                "run",
+                "1.2.3",
+                "sample",
+                0,
+                "success",
+                None,
+                None,
+            ),
+        )
+        self.assertEqual(summary.started_at.tzinfo, UTC)
+        self.assertGreaterEqual(summary.duration_s, 0)
+
+    def test_any_non_zero_exit_code_is_a_failure(self) -> None:
+        for exit_code in [1, 3, 7]:
+            with self.subTest(exit_code=exit_code):
+                summary = RunRecorder("load", "1.2.3").finish(exit_code, "x")
+
+                self.assertEqual(summary.outcome, "failed")
+                self.assertIsNone(summary.dataset)
+                self.assertEqual(summary.stages, ())
+                self.assertIsNone(summary.failed_stage)
+
+    def test_failure_names_the_stage_that_was_running(self) -> None:
+        recorder = RunRecorder("run", "1.2.3")
+        recorder.start("extract")
+        recorder.record("extract", StageResult(None, 3), 0.5)
+        recorder.start("load")
+
+        summary = recorder.finish(6, "load")
+
+        self.assertEqual(summary.failed_stage, "load")
+        self.assertEqual(summary.category, "load")
+        self.assertEqual([s.stage for s in summary.stages], ["extract"])
+
+    def test_a_failed_stage_with_counts_is_recorded_and_named(self) -> None:
+        recorder = RunRecorder("transform", "1.2.3")
+        recorder.start("transform")
+        result = StageResult(rows_in=4, rows_out=1, rows_rejected=3)
+        recorder.record("transform", result, 0.5, failed=True)
+
+        summary = recorder.finish(7, "quality_gate")
+
+        self.assertEqual(summary.failed_stage, "transform")
+        self.assertEqual(
+            summary.stages, (StageRecord("transform", result, 0.5),)
+        )
+
+    def test_a_finished_stage_is_not_the_failed_one(self) -> None:
+        # e.g. run fails on a setting after extract and before load.
+        recorder = RunRecorder("run", "1.2.3")
+        recorder.start("extract")
+        recorder.record("extract", StageResult(None, 3), 0.5)
+
+        self.assertIsNone(recorder.finish(3, "config").failed_stage)
+
+    def test_every_recorder_has_its_own_run_id(self) -> None:
+        ids = {RunRecorder("run", "1.2.3").run_id for _ in range(3)}
+
+        self.assertEqual(len(ids), 3)
 
 
 class LoadDatasetTest(PipelineTestCase):
