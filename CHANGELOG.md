@@ -22,6 +22,11 @@ and this project adheres to
 
 - The `--help` text of exit code 7 now reads "data failed a quality
   gate, nothing loaded", as it covers both gates.
+- The real datasets set `min_rows` from their measured valid rows:
+  `usgs_earthquakes` 1000 (a varying 30-day feed), `wa_ev_population`
+  100000 (a growing registry), `nyc_squirrel_census` 3000 (a static
+  census with 3,018 valid rows). Besides an empty source, they stop a truncated
+  download.
 
 ## [1.4.0] - 2026-11-20
 

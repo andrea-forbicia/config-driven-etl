@@ -299,7 +299,7 @@ config or settings, so the phase is a MINOR change.
       with the same outcome: rejected rows written, valid Parquet removed,
       exit code 7, category `quality_gate`, BigQuery untouched. When both
       gates fail, the message gives both reasons `[feat]`
-- [ ] Use `min_rows` in the real datasets, from their measured row
+- [x] Use `min_rows` in the real datasets, from their measured row
       counts, with a system test for a header-only source `[test]`
 - [ ] `LOG_FORMAT` setting: `json` (default, unchanged) or `pretty`, one
       aligned text line per event, errors included. Opt-in only, never
