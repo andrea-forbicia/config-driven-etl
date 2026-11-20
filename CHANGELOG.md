@@ -37,6 +37,12 @@ and this project adheres to
 - `load` without the valid Parquet fails with "not found; run transform
   first" instead of a Parquet read error.
 
+### Changed
+
+- `usgs_earthquakes`, `wa_ev_population` and `nyc_squirrel_census` set
+  `max_rejected_ratio: 0.01`; they reject at most 0.17% of their rows
+  today.
+
 ## [1.3.0] - 2026-11-19
 
 ### Added

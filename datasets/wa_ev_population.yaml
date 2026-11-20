@@ -82,6 +82,9 @@ columns:
 rules:
   deduplicate_on: [dol_vehicle_id]
   drop_unmapped_columns: false
+  # Rejected on 2026-11-20: 0.002% (7 of 304,258). A broken source rejects
+  # most rows and is stopped before it replaces the table.
+  max_rejected_ratio: 0.01
 target:
   table: wa_ev_population
   cluster_by: [county, make]

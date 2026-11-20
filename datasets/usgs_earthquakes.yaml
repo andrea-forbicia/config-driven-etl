@@ -104,6 +104,9 @@ columns:
 rules:
   deduplicate_on: [id]
   drop_unmapped_columns: false
+  # Rejected on 2026-11-20: 0% (0 of 9,737). A broken source rejects
+  # most rows and is stopped before it replaces the table.
+  max_rejected_ratio: 0.01
 target:
   table: usgs_earthquakes
   partition_by: time

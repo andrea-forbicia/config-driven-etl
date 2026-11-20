@@ -12,10 +12,15 @@ import pytest
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import rejected_table_spec, table_spec
+from config_driven_etl.bq_schema import (
+    AUDIT_TABLE_SPEC,
+    rejected_table_spec,
+    table_spec,
+)
 from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.extract import scan_raw_csv
 from config_driven_etl.load import (
+    append_rows,
     bigquery_table_id,
     ensure_table,
     load_parquet,
@@ -25,6 +30,11 @@ from config_driven_etl.load import (
     verify_parquet,
     verify_table_rows,
     write_parquet,
+)
+from config_driven_etl.pipeline import (
+    RunRecorder,
+    StageResult,
+    audit_row,
 )
 from config_driven_etl.settings import Settings
 from config_driven_etl.transform import (
@@ -179,6 +189,50 @@ class BigQueryLoadTest(unittest.TestCase):
         load_parquet(self.client, path, table_id, spec)
 
         verify_table_rows(self.client, table_id, 0)
+
+    def test_audit_rows_are_appended(self) -> None:
+        table_id = self.temporary_table("etl_runs")
+        rows = []
+        for exit_code, category in [(0, None), (7, "quality_gate")]:
+            recorder = RunRecorder("run", "0.0.0")
+            recorder.dataset = "library_loans"
+            recorder.start("transform")
+            result = StageResult(
+                rows_in=14,
+                rows_out=4,
+                rows_rejected=10,
+                rejections={"loan_id: duplicate": 1, "fine_eur: below min": 1},
+            )
+            recorder.record("transform", result, 0.5, failed=exit_code != 0)
+            rows.append(audit_row(recorder.finish(exit_code, category)))
+
+        # Each append is a separate command, as in real runs.
+        for row in rows:
+            ensure_table(self.client, table_id, AUDIT_TABLE_SPEC)
+            append_rows(self.client, table_id, AUDIT_TABLE_SPEC, [row])
+
+        verify_table_rows(self.client, table_id, len(rows))
+        table = self.read_table(table_id)
+        self.assertEqual(table["started_at"].null_count(), 0)
+        # TIMESTAMP values need tzdata to become Python objects on Windows.
+        loaded = {
+            row["run_id"]: row for row in table.drop("started_at").to_dicts()
+        }
+        for row in rows:
+            with self.subTest(exit_code=row["exit_code"]):
+                stored = loaded[row["run_id"]]
+                self.assertEqual(
+                    (stored["exit_code"], stored["category"]),
+                    (row["exit_code"], row["category"]),
+                )
+                self.assertEqual(stored["stages"][0]["rows_rejected"], 10)
+                self.assertEqual(
+                    {
+                        item["reason"]: item["rows"]
+                        for item in stored["stages"][0]["rejections"]
+                    },
+                    {"loan_id: duplicate": 1, "fine_eur: below min": 1},
+                )
 
 
 if __name__ == "__main__":

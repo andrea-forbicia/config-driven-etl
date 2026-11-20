@@ -105,5 +105,8 @@ columns:
 rules:
   deduplicate_on: [squirrel_id]
   drop_unmapped_columns: true
+  # Rejected on 2026-11-20: 0.17% (5 of 3,023). A broken source rejects
+  # most rows and is stopped before it replaces the table.
+  max_rejected_ratio: 0.01
 target:
   table: nyc_squirrel_census
