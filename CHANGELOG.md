@@ -18,6 +18,12 @@ and this project adheres to
   tables keep their data. A source with no rows always passes. The
   transform stage then logs a `stage_failed` line with the usual counts,
   the rejections by reason and `rejected_file`.
+- Every `extract`, `transform`, `load` and `run` command ends with a
+  `run_finished` log line, failed or not: `run_id`, `command`, `version`,
+  `dataset`, `started_at` (UTC), `duration_s`, `outcome`, `exit_code`,
+  `category` and `failed_stage` (both null on success), and the row
+  counts and duration of each stage that produced them. Stage lines and
+  `run_failed` carry the same `run_id`.
 - `load` without the valid Parquet fails with "not found; run transform
   first" instead of a Parquet read error.
 

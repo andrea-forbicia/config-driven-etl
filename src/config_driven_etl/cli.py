@@ -3,6 +3,7 @@
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 from typing import Annotated
@@ -26,7 +27,11 @@ from config_driven_etl.logging import (
     log_event,
 )
 from config_driven_etl.pipeline import (
+    Command,
     QualityGateError,
+    RunRecorder,
+    RunSummary,
+    Stage,
     StageResult,
     extract_dataset,
     load_dataset,
@@ -150,83 +155,90 @@ def _validate_file(path: Path) -> bool:
 @app.command()
 def extract(dataset: DatasetFile) -> None:
     """Download or copy the raw CSV into DATA_DIR/raw/<name>/."""
-    with _command(dataset):
-        config = load_dataset_config(dataset)
-        _extract(config, Settings())
+    with _command("extract", dataset) as job:
+        _extract(job, Settings())
 
 
 @app.command()
 def transform(dataset: DatasetFile) -> None:
     """Clean the raw CSV into DATA_DIR/processed/<name>/<name>.parquet."""
-    with _command(dataset):
-        config = load_dataset_config(dataset)
-        _transform(config, Settings())
+    with _command("transform", dataset) as job:
+        _transform(job, Settings())
 
 
 @app.command()
 def load(dataset: DatasetFile) -> None:
     """Load the processed Parquet into BigQuery, replacing the table data."""
-    with _command(dataset):
-        config = load_dataset_config(dataset)
-        _load(config, Settings())
+    with _command("load", dataset) as job:
+        _load(job, Settings())
 
 
 @app.command()
 def run(dataset: DatasetFile) -> None:
     """Extract, transform and load one dataset."""
-    with _command(dataset):
-        config = load_dataset_config(dataset)
+    with _command("run", dataset) as job:
         settings = Settings()
         # Checked first so a missing setting does not waste a download.
         _bigquery_target(settings)
-        _extract(config, settings)
-        _transform(config, settings)
-        _load(config, settings)
+        _extract(job, settings)
+        _transform(job, settings)
+        _load(job, settings)
 
 
-def _extract(config: DatasetConfig, settings: Settings) -> None:
+@dataclass(frozen=True)
+class _Job:
+    """The dataset of a command and the recorder of its stages."""
+
+    config: DatasetConfig
+    recorder: RunRecorder
+
+
+def _extract(job: _Job, settings: Settings) -> None:
+    job.recorder.start("extract")
     started = time.perf_counter()
     with requests.Session() as session:
-        result = extract_dataset(config, settings.data_dir, session)
-    _log_stage("extract", config, result, started)
+        result = extract_dataset(job.config, settings.data_dir, session)
+    _finish_stage(job, "extract", result, started)
 
 
-def _transform(config: DatasetConfig, settings: Settings) -> None:
+def _transform(job: _Job, settings: Settings) -> None:
+    job.recorder.start("transform")
     started = time.perf_counter()
     # Relative to DATA_DIR, which is a setting and stays out of the logs.
-    rejected_file = rejected_parquet_path(Path(), config.name).as_posix()
+    rejected_file = rejected_parquet_path(Path(), job.config.name).as_posix()
     try:
-        result = transform_dataset(config, settings.data_dir)
+        result = transform_dataset(job.config, settings.data_dir)
     except QualityGateError as error:
         # The counts by reason and the file say why the gate failed.
-        _log_stage(
+        _finish_stage(
+            job,
             "transform",
-            config,
             error.result,
             started,
             "stage_failed",
             rejected_file=rejected_file,
         )
         raise
-    _log_stage(
-        "transform", config, result, started, rejected_file=rejected_file
+    _finish_stage(
+        job, "transform", result, started, rejected_file=rejected_file
     )
 
 
-def _load(config: DatasetConfig, settings: Settings) -> None:
+def _load(job: _Job, settings: Settings) -> None:
+    job.recorder.start("load")
     started = time.perf_counter()
     project, dataset = _bigquery_target(settings)
     client = _bigquery_client(project)
     with client:
-        result = load_dataset(config, settings.data_dir, client, dataset)
+        result = load_dataset(job.config, settings.data_dir, client, dataset)
     extra: dict[str, object] = {}
     if result.rejected_rows_loaded is not None:
         # The table name only: the full id holds the project.
         extra = {
-            "rejected_table": config.target.rejected_table,
+            "rejected_table": job.config.target.rejected_table,
             "rejected_rows_loaded": result.rejected_rows_loaded,
         }
-    _log_stage("load", config, result, started, **extra)
+    _finish_stage(job, "load", result, started, **extra)
 
 
 def _bigquery_target(settings: Settings) -> tuple[str, str]:
@@ -249,49 +261,99 @@ def _bigquery_client(project: str) -> bigquery.Client:
     return bigquery.Client(project=project)
 
 
-def _log_stage(
-    stage: str,
-    config: DatasetConfig,
+def _finish_stage(
+    job: _Job,
+    stage: Stage,
     result: StageResult,
     started: float,
     event: str = "stage_completed",
     /,
     **extra: object,
 ) -> None:
+    """Log one stage line and record the stage in the run summary."""
+    duration_s = round(time.perf_counter() - started, 3)
+    job.recorder.record(
+        stage, result, duration_s, failed=event == "stage_failed"
+    )
     fields: dict[str, object] = {
+        "run_id": job.recorder.run_id,
         "stage": stage,
-        "dataset": config.name,
-        "rows_in": result.rows_in,
-        "rows_out": result.rows_out,
-        "rows_rejected": result.rows_rejected,
-        "duration_s": round(time.perf_counter() - started, 3),
+        "dataset": job.config.name,
+        **_counts(result),
+        "duration_s": duration_s,
     }
     if result.rejections is not None:
         fields["rejections"] = result.rejections
     log_event(event, **fields, **extra)
 
 
-@contextmanager
-def _command(dataset_file: Path) -> Generator[None]:
-    """Log as JSON and turn an expected failure into its exit code.
+def _counts(result: StageResult) -> dict[str, object]:
+    return {
+        "rows_in": result.rows_in,
+        "rows_out": result.rows_out,
+        "rows_rejected": result.rows_rejected,
+    }
 
-    The failure is one error event with its category; nothing else is
-    printed.
+
+@contextmanager
+def _command(command: Command, dataset_file: Path) -> Generator[_Job]:
+    """Load the dataset file, log as JSON, and set the exit code.
+
+    An expected failure is one error event with its category. Every
+    command that ends with an exit code, failed or not, ends with one
+    run_finished event that summarizes it; an interrupt (Ctrl-C) does
+    not. Nothing else is printed.
     """
     configure_logging()
+    recorder = RunRecorder(command, __version__)
     expected = tuple(kind for kinds, _ in _CATEGORIES for kind in kinds)
     try:
-        yield
+        config = load_dataset_config(dataset_file)
+        recorder.dataset = config.name
+        yield _Job(config, recorder)
     except expected as error:
         code = _exit_code(error)
         log_error(
             "run_failed",
+            run_id=recorder.run_id,
             dataset_file=str(dataset_file),
             category=code.name.lower(),
             exit_code=code.value,
             error=str(error),
         )
+        _log_summary(recorder.finish(code, code.name.lower()))
         raise typer.Exit(code=code) from error
+    except Exception:
+        # A bug keeps its traceback, but the run is still summarized.
+        code = ExitCode.INTERNAL
+        _log_summary(recorder.finish(code, code.name.lower()))
+        raise
+    _log_summary(recorder.finish(ExitCode.OK, None))
+
+
+def _log_summary(summary: RunSummary) -> None:
+    log = log_event if summary.exit_code == ExitCode.OK else log_error
+    log(
+        "run_finished",
+        run_id=summary.run_id,
+        command=summary.command,
+        version=summary.version,
+        dataset=summary.dataset,
+        started_at=summary.started_at.isoformat(timespec="milliseconds"),
+        duration_s=summary.duration_s,
+        outcome=summary.outcome,
+        exit_code=summary.exit_code,
+        category=summary.category,
+        failed_stage=summary.failed_stage,
+        stages=[
+            {
+                "stage": record.stage,
+                **_counts(record.result),
+                "duration_s": record.duration_s,
+            }
+            for record in summary.stages
+        ],
+    )
 
 
 def _exit_code(error: Exception) -> ExitCode:

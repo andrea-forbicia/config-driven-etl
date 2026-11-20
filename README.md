@@ -35,8 +35,10 @@ flowchart LR
   `target.rejected_table`, the rejected rows are loaded into their own
   table the same way.
 
-Each stage logs one JSON line to stderr. Exit codes per error category are
-listed by `python -m config_driven_etl --help`.
+Each stage logs one JSON line to stderr, and every command ends with a
+`run_finished` line summarizing it; all lines of a command share a
+`run_id`. Exit codes per error category are listed by
+`python -m config_driven_etl --help`.
 
 ## Setup
 

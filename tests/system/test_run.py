@@ -114,7 +114,11 @@ class RunCommandTest(unittest.TestCase):
         return row
 
     def events(self, result: Result) -> list[dict[str, Any]]:
-        return [json.loads(line) for line in result.stderr.splitlines()]
+        """The events before the run_finished line every command ends with."""
+        lines = result.stderr.splitlines()
+        *events, summary = [json.loads(line) for line in lines]
+        self.assertEqual(summary["event"], "run_finished")
+        return events
 
     def assert_matches_outcome(self, name: str, result: Result) -> None:
         """Parquet, loaded table and transform event match the fixture."""
@@ -248,10 +252,13 @@ class RunCommandTest(unittest.TestCase):
     def test_logs_one_line_per_stage(self) -> None:
         result = self.run_dataset("sensor_readings")
 
+        events = self.events(result)
         self.assertEqual(
-            [event["stage"] for event in self.events(result)],
+            [event["stage"] for event in events],
             ["extract", "transform", "load"],
         )
+        # One run_id ties the stage lines to the summary.
+        self.assertEqual(len({event["run_id"] for event in events}), 1)
 
 
 if __name__ == "__main__":

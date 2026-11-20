@@ -1,7 +1,11 @@
 """The extract, transform and load stages of one dataset run."""
 
+import time
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import polars as pl
 import requests
@@ -50,6 +54,90 @@ class StageResult:
     rejections: dict[str, int] | None = None
     # Rows loaded into target.rejected_table; None without one.
     rejected_rows_loaded: int | None = None
+
+
+Stage = Literal["extract", "transform", "load"]
+Command = Literal["extract", "transform", "load", "run"]
+
+
+@dataclass(frozen=True)
+class StageRecord:
+    """A stage that produced row counts; a failed quality gate does too."""
+
+    stage: Stage
+    result: StageResult
+    duration_s: float
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """What one pipeline command did, from start to exit code."""
+
+    run_id: str
+    command: Command
+    version: str
+    started_at: datetime
+    # None when the dataset file could not be read.
+    dataset: str | None
+    stages: tuple[StageRecord, ...]
+    exit_code: int
+    # Error category, e.g. "load"; None on success.
+    category: str | None
+    # The stage running when the command failed; None on success or
+    # when no stage had started.
+    failed_stage: Stage | None
+    duration_s: float
+
+    @property
+    def outcome(self) -> Literal["success", "failed"]:
+        return "success" if self.exit_code == 0 else "failed"
+
+
+class RunRecorder:
+    """Collects the stages of one command into a RunSummary."""
+
+    def __init__(self, command: Command, version: str) -> None:
+        self.run_id = uuid.uuid4().hex
+        self.dataset: str | None = None
+        self._command: Command = command
+        self._version = version
+        self._started_at = datetime.now(UTC)
+        # Wall-clock time can jump; durations use a monotonic clock.
+        self._started = time.perf_counter()
+        self._stages: list[StageRecord] = []
+        self._running: Stage | None = None
+
+    def start(self, stage: Stage) -> None:
+        """Mark a stage as running, so a failure can name it."""
+        self._running = stage
+
+    def record(
+        self,
+        stage: Stage,
+        result: StageResult,
+        duration_s: float,
+        *,
+        failed: bool = False,
+    ) -> None:
+        """Add a stage that produced row counts, and end it unless failed."""
+        self._stages.append(StageRecord(stage, result, duration_s))
+        if not failed:
+            self._running = None
+
+    def finish(self, exit_code: int, category: str | None) -> RunSummary:
+        """The summary of the run, ending with exit_code."""
+        return RunSummary(
+            run_id=self.run_id,
+            command=self._command,
+            version=self._version,
+            started_at=self._started_at,
+            dataset=self.dataset,
+            stages=tuple(self._stages),
+            exit_code=exit_code,
+            category=category,
+            failed_stage=None if exit_code == 0 else self._running,
+            duration_s=round(time.perf_counter() - self._started, 3),
+        )
 
 
 class QualityGateError(Exception):
