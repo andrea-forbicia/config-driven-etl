@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 11 — Rejected rows quarantine**
+**Current phase: 12 — Quality gates**
 
 How to use this plan:
 
@@ -250,6 +250,39 @@ Exit: after `run`, each rejected row of both fixture datasets is in the
 rejected Parquet with its raw values and all its reasons; with
 `rejected_table` set, a second run leaves both tables in the same state;
 the GitHub Release for `v1.3.0` exists.
+
+## Phase 12 — Quality gates
+
+Goal: a run decides whether its data is good enough to load, and leaves a
+queryable record of what it did. Both features are optional config or
+additive outputs, so the phase is a MINOR change.
+
+- [ ] Optional `rules.max_rejected_ratio` (0.0 to 1.0) in the config:
+      validated, documented in `datasets/example.yaml` `[feat]`
+- [ ] Enforce the gate after the `transform` stage: above the ratio, the
+      run fails with a new exit code before any load, so a broken source
+      never replaces a good table. The rejected Parquet is still written,
+      to explain the failure. Decide first how empty input counts (ratio
+      undefined) and whether the gate also applies to the standalone
+      `transform` command `[feat]`
+- [ ] Run summary: a `run_id`, the package version, start time, per-stage
+      row counts and durations, outcome and exit code, collected by
+      `pipeline.py` and logged as one final JSON line `[feat]`
+- [ ] Optional `target.audit_table`: append the run summary with a load
+      job (`WRITE_APPEND`, explicit schema from `bq_schema.py`), also when
+      the run fails after the config is valid. Decide first whether an
+      audit load failure changes the run's exit code, and whether the
+      table is per dataset or shared through a setting `[feat]`
+- [ ] System tests for a run blocked by the gate and for the audit row of
+      a successful and a failed run; `gcp` test appends to a temporary
+      audit table; use both options in at least one real dataset `[test]`
+- [ ] Release `v1.4.0`: version bump, `CHANGELOG.md` section, annotated
+      tag `[chore]`
+
+Exit: a fixture above its `max_rejected_ratio` exits with the gate's code
+and leaves the BigQuery tables untouched; every `run` with `audit_table`
+set appends exactly one row, success or failure; the GitHub Release for
+`v1.4.0` exists.
 
 ## Definition of done
 

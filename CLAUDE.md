@@ -120,6 +120,8 @@ every option and a test keeps it complete, so it is the reference.
   schema autodetection.
 - Runs are idempotent: re-running the same input produces the same table state
   (`WRITE_TRUNCATE` per partition, or a full truncate for small datasets).
+  The one exception is the audit table: it records events, not data state,
+  so each run appends one row with `WRITE_APPEND`.
 - Bad rows are counted and logged, not silently dropped.
 - Log one JSON line per stage with dataset name, row counts in, out, rejected,
   and duration.
