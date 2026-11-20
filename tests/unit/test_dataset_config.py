@@ -62,6 +62,7 @@ def full_config() -> dict[str, Any]:
         "rules": {
             "deduplicate_on": ["observation_date", "station_id"],
             "drop_unmapped_columns": False,
+            "max_rejected_ratio": 0.05,
         },
         "target": {
             "table": "city_weather",
@@ -89,6 +90,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         self.assertIsNone(column.max)
         self.assertEqual(config.rules.deduplicate_on, ())
         self.assertTrue(config.rules.drop_unmapped_columns)
+        self.assertIsNone(config.rules.max_rejected_ratio)
         self.assertIsNone(config.target.partition_by)
         self.assertEqual(config.target.cluster_by, ())
         self.assertEqual(config.target.write_mode, "truncate")
@@ -112,6 +114,7 @@ class DatasetConfigValidTest(unittest.TestCase):
             config.rules.deduplicate_on, ("observation_date", "station_id")
         )
         self.assertFalse(config.rules.drop_unmapped_columns)
+        self.assertEqual(config.rules.max_rejected_ratio, 0.05)
         self.assertEqual(config.target.partition_by, "observation_date")
         self.assertEqual(config.target.cluster_by, ("station_id",))
         self.assertEqual(config.target.rejected_table, "city_weather_rejected")
@@ -133,6 +136,16 @@ class DatasetConfigValidTest(unittest.TestCase):
         )
 
         self.assertEqual(column.source, "Temp (C) / día")
+
+    def test_max_rejected_ratio_bounds_are_inclusive(self) -> None:
+        for value in [0, 0.0, 1, 1.0]:
+            with self.subTest(value=value):
+                data = minimal_config()
+                data["rules"] = {"max_rejected_ratio": value}
+
+                config = DatasetConfig.model_validate(data)
+
+                self.assertEqual(config.rules.max_rejected_ratio, value)
 
     def test_config_is_immutable(self) -> None:
         config = DatasetConfig.model_validate(minimal_config())
@@ -281,6 +294,16 @@ class DatasetConfigInvalidTest(unittest.TestCase):
                 data["target"].update(rejected_table="r", **{key: "id"})
 
                 self.assert_invalid(data, ("target", key))
+
+    def test_invalid_max_rejected_ratio(self) -> None:
+        # A percentage, out-of-range values, NaN, and YAML values that a
+        # lax float would coerce (true, a quoted number).
+        for value in [5, -0.1, 1.01, float("nan"), True, "0.1"]:
+            with self.subTest(value=value):
+                data = minimal_config()
+                data["rules"] = {"max_rejected_ratio": value}
+
+                self.assert_invalid(data, ("rules", "max_rejected_ratio"))
 
     def test_unsupported_write_mode(self) -> None:
         data = minimal_config()

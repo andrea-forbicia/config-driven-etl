@@ -373,6 +373,10 @@ class Rules(_StrictModel):
 
     deduplicate_on: tuple[Identifier, ...] = ()
     drop_unmapped_columns: bool = True
+    # Strict, so YAML `yes` or a quoted "0.1" is not read as a number.
+    max_rejected_ratio: float | None = Field(
+        default=None, ge=0, le=1, strict=True
+    )
 
 
 class Target(_StrictModel):

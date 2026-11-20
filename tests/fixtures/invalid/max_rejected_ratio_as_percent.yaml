@@ -1,0 +1,12 @@
+# Invalid: the ratio is written as a percentage.
+name: max_rejected_ratio_as_percent
+source:
+  path: data/raw/sample.csv
+columns:
+  - source: Id
+    name: id
+    type: int
+rules:
+  max_rejected_ratio: 5
+target:
+  table: sample

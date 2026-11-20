@@ -257,7 +257,7 @@ Goal: a run decides whether its data is good enough to load, and leaves a
 queryable record of what it did. Both features are optional config or
 additive outputs, so the phase is a MINOR change.
 
-- [ ] Optional `rules.max_rejected_ratio` (0.0 to 1.0) in the config:
+- [x] Optional `rules.max_rejected_ratio` (0.0 to 1.0) in the config:
       validated, documented in `datasets/example.yaml` `[feat]`
 - [ ] Enforce the gate after the `transform` stage: above the ratio, the
       run fails with a new exit code before any load, so a broken source
