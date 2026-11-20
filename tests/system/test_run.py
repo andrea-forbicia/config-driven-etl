@@ -119,12 +119,17 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         return result
 
-    def gated_dataset(self, name: str, limit: float) -> Path:
-        """A copy of a fixture's YAML with rules.max_rejected_ratio set."""
+    def gated_dataset(
+        self, name: str, csv: Path | None = None, **rules: object
+    ) -> Path:
+        """A copy of a fixture's YAML with rules set, and maybe its CSV."""
         config = fixture_config(name)
-        rules = config.rules.model_copy(update={"max_rejected_ratio": limit})
+        updated = config.rules.model_copy(update=rules)
         # The loaded source path is absolute, so the copy works anywhere.
-        gated = config.model_copy(update={"rules": rules})
+        gated = config.model_copy(update={"rules": updated})
+        if csv is not None:
+            source = config.source.model_copy(update={"path": csv})
+            gated = gated.model_copy(update={"source": source})
         path = self.directory / f"{name}_gated.yaml"
         path.write_text(
             yaml.safe_dump(gated.model_dump(mode="json", exclude_none=True)),
@@ -294,7 +299,7 @@ class RunCommandTest(unittest.TestCase):
         jobs = len(self.bigquery.job_configs)
         outcome = OUTCOMES["library_loans"]
         limit = outcome.rows_rejected / outcome.rows_in / 2
-        dataset = self.gated_dataset("library_loans", limit)
+        dataset = self.gated_dataset("library_loans", max_rejected_ratio=limit)
 
         result = CliRunner().invoke(app, ["run", str(dataset)])
 
@@ -314,9 +319,40 @@ class RunCommandTest(unittest.TestCase):
             self.rejected("library_loans").height, outcome.rows_rejected
         )
 
+    def test_header_only_source_leaves_the_tables_untouched(self) -> None:
+        self.run_dataset("library_loans")
+        loaded = dict(self.bigquery.data)
+        jobs = len(self.bigquery.job_configs)
+        source = fixture_config("library_loans").source.path
+        assert source is not None
+        header = source.read_bytes().splitlines(keepends=True)[0]
+        csv = self.directory / "header_only.csv"
+        csv.write_bytes(header)
+        dataset = self.gated_dataset(
+            "library_loans", csv, max_rejected_ratio=0.01, min_rows=1
+        )
+
+        result = CliRunner().invoke(app, ["run", str(dataset)])
+
+        # Without min_rows this would truncate both tables to zero rows.
+        self.assertEqual(result.exit_code, 7, result.output)
+        self.assertEqual(len(self.bigquery.job_configs), jobs)
+        for table_id, frame in self.bigquery.data.items():
+            with self.subTest(table=table_id):
+                self.assertTrue(frame.equals(loaded[table_id]))
+        summary = self.summary(result)
+        self.assertEqual(summary["category"], "quality_gate")
+        (failure,) = [
+            json.loads(line)
+            for line in result.stderr.splitlines()
+            if '"run_failed"' in line
+        ]
+        self.assertIn("0 valid rows, below rules.min_rows 1", failure["error"])
+        self.assertNotIn("max_rejected_ratio", failure["error"])
+
     def test_audit_table_gets_one_row_per_run(self) -> None:
         os.environ["BQ_AUDIT_TABLE"] = "etl_runs"
-        gated = self.gated_dataset("library_loans", 0.0)
+        gated = self.gated_dataset("library_loans", max_rejected_ratio=0.0)
 
         runs = [
             self.run_dataset("sensor_readings"),

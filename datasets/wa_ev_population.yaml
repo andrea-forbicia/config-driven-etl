@@ -85,6 +85,9 @@ rules:
   # Rejected on 2026-11-20: 0.002% (7 of 304,258). A broken source rejects
   # most rows and is stopped before it replaces the table.
   max_rejected_ratio: 0.01
+  # 304,251 valid rows on 2026-11-20. The registry only grows, so a
+  # third of that stops a truncated download or an error page.
+  min_rows: 100000
 target:
   table: wa_ev_population
   cluster_by: [county, make]
