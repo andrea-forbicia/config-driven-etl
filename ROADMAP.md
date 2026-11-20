@@ -278,7 +278,7 @@ additive outputs, so the phase is a MINOR change.
       a successful and a failed run; `gcp` test appends to a temporary
       audit table; use `max_rejected_ratio` in at least one real dataset
       `[test]`
-- [ ] Release `v1.4.0`: version bump, `CHANGELOG.md` section, annotated
+- [x] Release `v1.4.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
 
 Exit: a fixture above its `max_rejected_ratio` exits with the gate's code
