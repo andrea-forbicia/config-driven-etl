@@ -34,6 +34,7 @@ from config_driven_etl.load import (
     parquet_row_count,
     processed_parquet_path,
     rejected_parquet_path,
+    table_label,
     verify_table_rows,
     write_parquet_files,
 )
@@ -339,8 +340,9 @@ def load_dataset(
             _load_and_verify(client, rejected)
         except LoadError as error:
             raise LoadError(
-                f"{error}\nrejected rows not loaded; {valid.table_id} "
-                "already holds this run's valid rows"
+                f"{error}\nrejected rows not loaded; "
+                f"{table_label(valid.table_id)} already holds this run's "
+                "valid rows"
             ) from error
     return StageResult(
         rows_in=valid.rows,

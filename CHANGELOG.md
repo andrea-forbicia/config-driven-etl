@@ -43,6 +43,13 @@ and this project adheres to
   `max_rejected_ratio: 0.01`; they reject at most 0.17% of their rows
   today.
 
+### Fixed
+
+- BigQuery error messages, logged in `run_failed` and `audit_failed`,
+  no longer contain the project id: tables are named `dataset.table`,
+  and the project id quoted in Google's own messages (for example in
+  request URLs) is replaced with `<project>`.
+
 ## [1.3.0] - 2026-11-19
 
 ### Added

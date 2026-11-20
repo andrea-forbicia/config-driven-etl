@@ -504,6 +504,20 @@ class PipelineCommandsTest(unittest.TestCase):
         )
         self.client.load_table_from_file.assert_not_called()
 
+    def test_bigquery_errors_never_log_the_project(self) -> None:
+        # Google quotes the project in its messages, e.g. in request URLs.
+        denied = Forbidden(f"POST .../projects/{PROJECT}/jobs: denied")
+        self.enable_audit().result.side_effect = denied
+        self.client.get_table.side_effect = denied
+
+        for command in ["run", "extract"]:
+            with self.subTest(command=command):
+                result = self.invoke(command, LIBRARY)
+
+                self.assertIn(result.exit_code, (6, 8))
+                self.assertIn("projects/<project>/jobs", result.stderr)
+                self.assertNotIn(PROJECT, result.stderr)
+
     def test_bigquery_failure_exits_with_six(self) -> None:
         self.client.get_table.side_effect = Forbidden("access denied")
 
