@@ -389,6 +389,35 @@ class RunCommandTest(unittest.TestCase):
         # One run_id ties the stage lines to the summary.
         self.assertEqual(len({event["run_id"] for event in events}), 1)
 
+    def test_pretty_log_format(self) -> None:
+        os.environ["LOG_FORMAT"] = "pretty"
+        outcome = OUTCOMES["library_loans"]
+
+        result = self.run_dataset("library_loans")
+
+        extract, transform, load, run = result.stderr.splitlines()
+        self.assertRegex(extract, r"^\d\d:\d\d:\d\d  extract  ")
+        self.assertIn(f"out {outcome.rows_in}", extract)
+        self.assertIn(
+            f"in {outcome.rows_in}  out {outcome.rows_valid}  "
+            f"rejected {outcome.rows_rejected}  (",
+            transform,
+        )
+        self.assertIn(
+            f"rejected loaded {outcome.rows_rejected} into "
+            "library_loans_rejected",
+            load,
+        )
+        self.assertRegex(
+            run, r"  run        library_loans  success  exit 0  .*run \w{32}$"
+        )
+        # The table in BigQuery is the same as with JSON logs.
+        self.assertTrue(
+            self.bigquery.data["project.dataset.library_loans"].equals(
+                self.parquet("library_loans")
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
