@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-20
+
 ### Added
 
 - Optional `rules.max_rejected_ratio` in the dataset config, from 0.0 to
@@ -341,7 +343,8 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.1.0...v1.2.0
