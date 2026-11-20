@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 12 — Quality gates**
+**Current phase: 13 — Empty sources and readable logs**
 
 How to use this plan:
 
@@ -286,18 +286,35 @@ and leaves the BigQuery tables untouched; every `run` with
 `BQ_AUDIT_TABLE` set appends exactly one row, success or failure; the
 GitHub Release for `v1.4.0` exists.
 
-## Ideas
+## Phase 13 — Empty sources and readable logs
 
-Not planned into a phase yet.
+Goal: a source that returns too few rows cannot empty a good table, and
+a run can be followed comfortably in a terminal. Both are optional
+config or settings, so the phase is a MINOR change.
 
-- `rules.min_rows`: fail before any load when the source has fewer rows,
-  so a source that returns only its header cannot empty a good table.
-  `max_rejected_ratio` lets an empty source pass by design.
-- `LOG_FORMAT` setting: `json` (default, one JSON line per event, as
-  today) or `pretty`, one aligned text line per event for reading in a
-  terminal. Opt-in only, never chosen from whether stderr is a terminal,
-  so the same command always logs the same way and log collectors keep
-  getting JSON.
+- [ ] Optional `rules.min_rows` (a positive integer) in the config:
+      validated, documented in `datasets/example.yaml`. Decide first
+      whether it counts the rows read or the valid rows `[feat]`
+- [ ] Enforce it in the `transform` stage next to `max_rejected_ratio`,
+      with the same outcome: rejected rows written, valid Parquet removed,
+      exit code 7, category `quality_gate`, BigQuery untouched. When both
+      gates fail, the message gives both reasons `[feat]`
+- [ ] Use `min_rows` in the real datasets, from their measured row
+      counts, with a system test for a header-only source `[test]`
+- [ ] `LOG_FORMAT` setting: `json` (default, unchanged) or `pretty`, one
+      aligned text line per event, errors included. Opt-in only, never
+      chosen from whether stderr is a terminal. Decide first the time
+      zone of the pretty timestamps and which format is used when the
+      settings themselves are invalid `[feat]`
+- [ ] Document `LOG_FORMAT` in `.env.example`, the README run section and
+      the CLAUDE.md settings block; system test of a `pretty` run `[docs]`
+- [ ] Release `v1.5.0`: version bump, `CHANGELOG.md` section, annotated
+      tag `[chore]`
+
+Exit: a header-only source exits with the gate's code and leaves the
+BigQuery tables untouched; `LOG_FORMAT=pretty` logs one readable line per
+event and `json` output is unchanged; the GitHub Release for `v1.5.0`
+exists.
 
 ## Definition of done
 
