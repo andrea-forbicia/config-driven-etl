@@ -126,11 +126,15 @@ rules:
   # Default: true.
   drop_unmapped_columns: true
 
-  # Highest share of rejected rows a run will accept: rejected rows divided
-  # by the rows read, a number from 0.0 to 1.0 (0.05 is 5%, not 5),
-  # unquoted and in decimal notation (YAML reads 5e-2 as a string). 0.0
-  # will accept no rejected row. Validated only, not enforced yet.
-  # Optional, no default.
+  # Highest share of rejected rows a run accepts: rejected rows divided by
+  # the rows read, a number from 0.0 to 1.0 (0.05 is 5%, not 5), unquoted
+  # and in decimal notation (YAML reads 5e-2 as a string). 0.0 accepts no
+  # rejected row; a source with no rows always passes. Checked by the
+  # transform stage, in both the transform and run commands: above it,
+  # the rejected rows are written as usual, the valid Parquet is not
+  # written and the previous one is removed, so nothing can be loaded,
+  # and the command exits with code 7. The BigQuery tables keep their
+  # data. Optional: without it, any share is accepted.
   max_rejected_ratio: 0.05
 
 # BigQuery destination. Required.

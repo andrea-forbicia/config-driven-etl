@@ -52,6 +52,15 @@ class StageResult:
     rejected_rows_loaded: int | None = None
 
 
+class QualityGateError(Exception):
+    """Data that was read but fails a dataset-wide quality threshold."""
+
+    def __init__(self, message: str, result: StageResult) -> None:
+        super().__init__(message)
+        # The counts explain the failure, so they are logged with it.
+        self.result = result
+
+
 def extract_dataset(
     config: DatasetConfig, data_dir: Path, session: requests.Session
 ) -> StageResult:
@@ -81,6 +90,10 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
     """Transform the raw CSV and write valid and rejected rows as Parquet.
 
     Both files are verified before either replaces the previous run's.
+    Above rules.max_rejected_ratio, the previous valid output is removed
+    so no later load can use it, only the rejected rows are written, and
+    QualityGateError is raised; if the removal or the write fails, a
+    LoadError that also gives the gate's reason is raised instead.
     """
     raw = raw_csv_path(data_dir, config.name)
     result = transform(scan_raw_csv(raw, config.source), config)
@@ -95,25 +108,62 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
         raise ExtractError(
             f"{raw}: cannot read CSV: {error_reason(error)}"
         ) from error
-    write_parquet_files(
-        [
-            ParquetOutput(
-                processed_parquet_path(data_dir, config.name),
-                valid,
-                output_schema(config),
-            ),
-            ParquetOutput(
-                rejected_parquet_path(data_dir, config.name),
-                rejected,
-                rejected_schema(config),
-            ),
-        ]
-    )
-    return StageResult(
+    stage = StageResult(
         rows_in=valid.height + rejected.height,
         rows_out=valid.height,
         rows_rejected=rejected.height,
         rejections=dict(counts.iter_rows()),
+    )
+    valid_path = processed_parquet_path(data_dir, config.name)
+    rejected_output = ParquetOutput(
+        rejected_parquet_path(data_dir, config.name),
+        rejected,
+        rejected_schema(config),
+    )
+    gate_failure = _rejected_ratio_failure(config, stage)
+    if gate_failure is None:
+        write_parquet_files(
+            [
+                ParquetOutput(valid_path, valid, output_schema(config)),
+                rejected_output,
+            ]
+        )
+        return stage
+    # Removed before anything is written, so whatever fails next leaves
+    # no valid rows for a later load.
+    try:
+        valid_path.unlink(missing_ok=True)
+    except OSError as error:
+        raise LoadError(
+            f"{gate_failure}\n{valid_path}: cannot remove the previous "
+            f"valid rows, a later load would use them: {error_reason(error)}"
+        ) from error
+    try:
+        write_parquet_files([rejected_output])
+    except LoadError as error:
+        raise LoadError(f"{gate_failure}\n{error}") from error
+    raise QualityGateError(
+        f"{gate_failure}; valid rows not written, rejected rows written",
+        stage,
+    )
+
+
+def _rejected_ratio_failure(
+    config: DatasetConfig, stage: StageResult
+) -> str | None:
+    """Why the stage is above rules.max_rejected_ratio, or None."""
+    limit = config.rules.max_rejected_ratio
+    # No rows means no rejected rows: an empty source is not this
+    # gate's concern.
+    if limit is None or not stage.rows_in:
+        return None
+    ratio = stage.rows_rejected / stage.rows_in
+    if ratio <= limit:
+        return None
+    return (
+        f"{config.name}: {stage.rows_rejected} of {stage.rows_in} rows "
+        f"rejected (ratio {ratio:.4g}), above rules.max_rejected_ratio "
+        f"{limit:g}"
     )
 
 
@@ -130,6 +180,11 @@ def load_dataset(
     first, so those failures leave both tables unchanged.
     """
     path = processed_parquet_path(data_dir, config.name)
+    if not path.is_file():
+        raise LoadError(
+            f"{path}: not found; run transform first (a failed quality "
+            "gate removes it)"
+        )
     valid = _TableLoad(
         path=path,
         rows=parquet_row_count(path),

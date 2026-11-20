@@ -26,6 +26,7 @@ from config_driven_etl.logging import (
     log_event,
 )
 from config_driven_etl.pipeline import (
+    QualityGateError,
     StageResult,
     extract_dataset,
     load_dataset,
@@ -45,6 +46,7 @@ class ExitCode(IntEnum):
     EXTRACT = 4
     TRANSFORM = 5
     LOAD = 6
+    QUALITY_GATE = 7
 
 
 _EXIT_CODE_HELP = {
@@ -55,6 +57,7 @@ _EXIT_CODE_HELP = {
     ExitCode.EXTRACT: "source unreachable or raw CSV unreadable",
     ExitCode.TRANSFORM: "data does not match the dataset config",
     ExitCode.LOAD: "Parquet output or BigQuery load failed",
+    ExitCode.QUALITY_GATE: "too many rejected rows, nothing loaded",
 }
 
 # Expected failures by category; anything else is a bug and exits with
@@ -64,6 +67,7 @@ _CATEGORIES: list[tuple[tuple[type[Exception], ...], ExitCode]] = [
     ((ExtractError,), ExitCode.EXTRACT),
     ((TransformError,), ExitCode.TRANSFORM),
     ((LoadError, GoogleAuthError), ExitCode.LOAD),
+    ((QualityGateError,), ExitCode.QUALITY_GATE),
 ]
 
 app = typer.Typer(
@@ -189,9 +193,21 @@ def _extract(config: DatasetConfig, settings: Settings) -> None:
 
 def _transform(config: DatasetConfig, settings: Settings) -> None:
     started = time.perf_counter()
-    result = transform_dataset(config, settings.data_dir)
     # Relative to DATA_DIR, which is a setting and stays out of the logs.
     rejected_file = rejected_parquet_path(Path(), config.name).as_posix()
+    try:
+        result = transform_dataset(config, settings.data_dir)
+    except QualityGateError as error:
+        # The counts by reason and the file say why the gate failed.
+        _log_stage(
+            "transform",
+            config,
+            error.result,
+            started,
+            "stage_failed",
+            rejected_file=rejected_file,
+        )
+        raise
     _log_stage(
         "transform", config, result, started, rejected_file=rejected_file
     )
@@ -238,6 +254,8 @@ def _log_stage(
     config: DatasetConfig,
     result: StageResult,
     started: float,
+    event: str = "stage_completed",
+    /,
     **extra: object,
 ) -> None:
     fields: dict[str, object] = {
@@ -250,7 +268,7 @@ def _log_stage(
     }
     if result.rejections is not None:
         fields["rejections"] = result.rejections
-    log_event("stage_completed", **fields, **extra)
+    log_event(event, **fields, **extra)
 
 
 @contextmanager
