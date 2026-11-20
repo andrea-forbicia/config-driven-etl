@@ -137,6 +137,7 @@ GCP_PROJECT_ID=
 BQ_DATASET=
 DATA_DIR=./data
 BQ_AUDIT_TABLE=                   # optional, one row per command
+LOG_FORMAT=                       # optional, json (default) or pretty
 GOOGLE_APPLICATION_CREDENTIALS=   # local only, path outside the repo
 ```
 

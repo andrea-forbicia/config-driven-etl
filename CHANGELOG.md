@@ -22,7 +22,8 @@ and this project adheres to
   `HH:MM:SS` times, the counts and rejections of each stage, errors on
   one line, and the `run_id` on the final line. It is read before the
   other settings, so their errors use the asked format; an invalid
-  `LOG_FORMAT` exits with code 3 and is reported in JSON.
+  `LOG_FORMAT` exits with code 3 and is reported in JSON. Listed in
+  `.env.example`, with a sample in the README.
 
 ### Changed
 

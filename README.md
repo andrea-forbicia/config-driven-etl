@@ -35,9 +35,10 @@ flowchart LR
   `target.rejected_table`, the rejected rows are loaded into their own
   table the same way.
 
-Each stage logs one JSON line to stderr, and every command ends with a
+Each stage logs one line to stderr, and every command ends with a
 `run_finished` line summarizing it; all lines of a command share a
-`run_id`. With `BQ_AUDIT_TABLE` set, that summary is also appended as one
+`run_id`. Lines are JSON by default; `LOG_FORMAT=pretty` prints aligned
+text with local times instead, for reading in a terminal. With `BQ_AUDIT_TABLE` set, that summary is also appended as one
 row to that table in `BQ_DATASET`, for every dataset and every command,
 failed or not. Exit codes per error category are listed by
 `python -m config_driven_etl --help`.
@@ -59,6 +60,15 @@ gcloud auth application-default login
 ```
 python -m config_driven_etl validate datasets
 python -m config_driven_etl run datasets/usgs_earthquakes.yaml
+```
+
+With `LOG_FORMAT=pretty` in `.env` or the environment, a run reads:
+
+```
+15:54:50  extract    usgs_earthquakes  out 9713  2.7s
+15:54:50  transform  usgs_earthquakes  in 9713  out 9713  rejected 0  0.3s
+15:54:59  load       usgs_earthquakes  in 9713  out 9713  9.1s
+15:54:59  run        usgs_earthquakes  success  exit 0  12.4s  run 8380c5c6…
 ```
 
 `extract`, `transform` and `load` run single stages. With Docker, settings

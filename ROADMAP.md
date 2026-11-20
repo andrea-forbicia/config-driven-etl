@@ -306,7 +306,7 @@ config or settings, so the phase is a MINOR change.
       chosen from whether stderr is a terminal. Decide first the time
       zone of the pretty timestamps and which format is used when the
       settings themselves are invalid `[feat]`
-- [ ] Document `LOG_FORMAT` in `.env.example`, the README run section and
+- [x] Document `LOG_FORMAT` in `.env.example`, the README run section and
       the CLAUDE.md settings block; system test of a `pretty` run `[docs]`
 - [ ] Release `v1.5.0`: version bump, `CHANGELOG.md` section, annotated
       tag `[chore]`
