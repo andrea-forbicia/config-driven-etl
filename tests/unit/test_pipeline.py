@@ -639,7 +639,7 @@ class LoadDatasetTest(PipelineTestCase):
                 f"{REJECTED_LABEL}: additive schema change, "
                 "target.schema_change is none",
                 f"{REJECTED_LABEL}: raw.{last.name}: added as NULLABLE",
-                "rerun with --allow-schema-change to replace the schema",
+                "rerun with --allow-schema-change to replace the schemas",
             ],
         )
         client.load_table_from_file.assert_not_called()
@@ -682,7 +682,7 @@ class LoadDatasetTest(PipelineTestCase):
             [
                 f"{REJECTED_LABEL}: breaking schema change",
                 f"{REJECTED_LABEL}: old: removed",
-                "rerun with --allow-schema-change to replace the schema",
+                "rerun with --allow-schema-change to replace the schemas",
             ],
         )
         client.load_table_from_file.assert_not_called()

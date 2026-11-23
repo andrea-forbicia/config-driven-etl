@@ -455,7 +455,7 @@ def _schema_changes(
             "\n".join(
                 [
                     *problems,
-                    "rerun with --allow-schema-change to replace the schema",
+                    "rerun with --allow-schema-change to replace the schemas",
                 ]
             )
         )

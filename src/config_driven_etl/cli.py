@@ -111,8 +111,8 @@ AllowSchemaChange = Annotated[
     bool,
     typer.Option(
         "--allow-schema-change",
-        help="Replace the target table schema whatever the change, for "
-        "this run only.",
+        help="Replace the target and rejected table schemas whatever the "
+        "change, for this run only.",
     ),
 ]
 
