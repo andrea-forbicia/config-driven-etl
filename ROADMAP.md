@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 13 — Empty sources and readable logs**
+**Current phase: 14 — Schema drift**
 
 How to use this plan:
 
@@ -315,6 +315,50 @@ Exit: a header-only source exits with the gate's code and leaves the
 BigQuery tables untouched; `LOG_FORMAT=pretty` logs one readable line per
 event and `json` output is unchanged; the GitHub Release for `v1.5.0`
 exists.
+
+## Phase 14 — Schema drift
+
+Goal: a schema change, in the source file or in the config, is always
+seen and never silently applied. Today unmapped source columns are
+dropped without a trace, and `WRITE_TRUNCATE` replaces the schema of an
+existing table with whatever the config says, so a renamed or retyped
+column breaks downstream queries without failing the run.
+
+- [ ] Report source drift: the unmapped source columns that are dropped
+      are listed in the `transform` stage line and in the run summary,
+      so a new or renamed header is visible even when the run succeeds
+      `[feat]`
+- [ ] Compare the schema of an existing BigQuery table with the one
+      derived from the config, before any load, and classify the
+      difference: none, additive (new `NULLABLE` columns only) or
+      breaking (column removed, renamed, retyped, reordered, or
+      `NULLABLE` to `REQUIRED`). Pure function in `bq_schema.py`, the
+      `get_table` call stays in `load.py` `[feat]`
+- [ ] Optional `target.schema_change` in the config: what a load does
+      with each class of difference. Decide first the values, the
+      default, and whether a breaking change is ever allowed from the
+      config or only from a CLI flag for a single run. A blocked change
+      fails with a new exit code 9, category `schema_drift`, and leaves
+      the tables untouched; the message lists every column that differs.
+      Validated, documented in `datasets/example.yaml` `[feat]`
+- [ ] Apply the same check to `rejected_table`, and let the audit table
+      grow with the package: a newer run summary with extra fields
+      appends with `ALLOW_FIELD_ADDITION`, while a breaking difference
+      fails with exit code 8 as today. Decide first whether the audit
+      schema change is detected before the append or left to the load
+      job `[feat]`
+- [ ] System tests for an additive and a breaking change with the
+      BigQuery client faked; `gcp` test creates a temporary table with
+      an older schema and checks both outcomes; document exit code 9 in
+      `--help` and the README `[test]`
+- [ ] Release `v1.6.0`: version bump, `CHANGELOG.md` section, annotated
+      tag. If the default chosen above blocks a change that used to load,
+      decide first whether that is a MAJOR bump `[chore]`
+
+Exit: a fixture run against a table with a breaking difference exits
+with code 9 and leaves the BigQuery tables untouched; an additive change
+loads under the default; dropped source columns appear in the logs and
+the audit row; the GitHub Release for the new version exists.
 
 ## Definition of done
 
