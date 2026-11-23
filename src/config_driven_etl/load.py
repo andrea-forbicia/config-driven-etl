@@ -218,13 +218,14 @@ def table_label(table_id: str) -> str:
 
 def ensure_table(
     client: bigquery.Client, table_id: str, spec: TableSpec
-) -> None:
+) -> tuple[bigquery.SchemaField, ...] | None:
     """Create the table if it does not exist yet.
 
     A new table gets the spec's schema, day partitioning on partition_by
-    and clustering on cluster_by. An existing table keeps its schema,
-    which each load replaces, but BigQuery cannot change its partitioning
-    or clustering, so a mismatch raises LoadError.
+    and clustering on cluster_by, and None is returned. An existing table
+    keeps its schema, which each load replaces, and that schema is
+    returned for the caller to compare; BigQuery cannot change its
+    partitioning or clustering, so a mismatch raises LoadError.
     """
     with _bigquery_errors(table_id):
         try:
@@ -235,7 +236,7 @@ def ensure_table(
             table.clustering_fields = list(spec.cluster_by) or None
             # Another run may create it between the two calls.
             client.create_table(table, exists_ok=True)
-            return
+            return None
 
     problems = _layout_problems(existing, spec)
     if problems:
@@ -244,6 +245,7 @@ def ensure_table(
             "\n".join(f"{label}: {problem}" for problem in problems)
             + f"\n{label}: delete the table to recreate it"
         )
+    return tuple(existing.schema)
 
 
 def load_parquet(

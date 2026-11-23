@@ -340,13 +340,15 @@ column breaks downstream queries without failing the run.
       function in `bq_schema.py`, `RECORD` fields compared field by
       field; the `get_table` call before the load comes with the next
       checkbox, in `load.py` `[feat]`
-- [ ] Optional `target.schema_change` in the config: what a load does
-      with each class of difference. Decide first the values, the
-      default, and whether a breaking change is ever allowed from the
-      config or only from a CLI flag for a single run. A blocked change
-      fails with a new exit code 9, category `schema_drift`, and leaves
-      the tables untouched; the message lists every column that differs.
-      Validated, documented in `datasets/example.yaml` `[feat]`
+- [x] Optional `target.schema_change` in the config: what a load does
+      with each class of difference, `none` or `additive` (default). A
+      breaking change is never allowed from the config, only by
+      `--allow-schema-change` on `load` or `run`, for that run. A
+      blocked change fails with a new exit code 9, category
+      `schema_drift`, and leaves the tables untouched; the message lists
+      every column that differs, and accepted changes are listed as
+      `schema_changes` in the load stage line. Validated, documented in
+      `datasets/example.yaml` `[feat]`
 - [ ] Apply the same check to `rejected_table` `[feat]`
 - [ ] System tests for an additive and a breaking change with the
       BigQuery client faked; `gcp` test creates a temporary table with

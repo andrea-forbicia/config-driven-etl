@@ -97,6 +97,7 @@ class DatasetConfigValidTest(unittest.TestCase):
         self.assertEqual(config.target.cluster_by, ())
         self.assertEqual(config.target.write_mode, "truncate")
         self.assertIsNone(config.target.rejected_table)
+        self.assertEqual(config.target.schema_change, "additive")
 
     def test_full_config_keeps_every_value(self) -> None:
         config = DatasetConfig.model_validate(full_config())
@@ -325,6 +326,12 @@ class DatasetConfigInvalidTest(unittest.TestCase):
                 data["rules"] = {"min_rows": value}
 
                 self.assert_invalid(data, ("rules", "min_rows"))
+
+    def test_unknown_schema_change(self) -> None:
+        data = minimal_config()
+        data["target"]["schema_change"] = "breaking"
+
+        self.assert_invalid(data, ("target", "schema_change"))
 
     def test_unsupported_write_mode(self) -> None:
         data = minimal_config()

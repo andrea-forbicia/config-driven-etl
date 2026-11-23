@@ -391,6 +391,9 @@ class Target(_StrictModel):
     # Only truncate keeps re-runs idempotent.
     write_mode: Literal["truncate"] = "truncate"
     rejected_table: Identifier | None = None
+    # The most a load may change the schema of an existing table; a
+    # breaking change needs --allow-schema-change on the command line.
+    schema_change: Literal["none", "additive"] = "additive"
 
 
 class DatasetConfig(_StrictModel):

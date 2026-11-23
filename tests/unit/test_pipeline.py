@@ -10,7 +10,10 @@ import requests
 from google.api_core.exceptions import BadRequest, NotFound
 from google.cloud import bigquery
 
-from config_driven_etl.bq_schema import bigquery_rejected_schema
+from config_driven_etl.bq_schema import (
+    bigquery_rejected_schema,
+    table_spec,
+)
 from config_driven_etl.dataset_config import (
     DatasetConfig,
     load_dataset_config,
@@ -24,6 +27,7 @@ from config_driven_etl.load import (
 from config_driven_etl.pipeline import (
     QualityGateError,
     RunRecorder,
+    SchemaDriftError,
     StageRecord,
     StageResult,
     extract_dataset,
@@ -65,6 +69,23 @@ def fake_client(*table_rows: int) -> mock.MagicMock:
     return client
 
 
+def existing_client(
+    config: DatasetConfig,
+    schema: list[bigquery.SchemaField],
+    rows: int,
+) -> mock.MagicMock:
+    """A client whose target table exists with schema, then holds rows."""
+    spec = table_spec(config)
+    table = bigquery.Table(VALID_TABLE, schema=schema)
+    table.clustering_fields = list(spec.cluster_by) or None
+    loaded = mock.create_autospec(bigquery.Table, instance=True)
+    loaded.num_rows = rows
+    client = mock.create_autospec(bigquery.Client, instance=True)
+    client.project = "project"
+    client.get_table.side_effect = [table, loaded]
+    return client
+
+
 def with_rules(config: DatasetConfig, **rules: object) -> DatasetConfig:
     updated = config.rules.model_copy(update=rules)
     return config.model_copy(update={"rules": updated})
@@ -77,8 +98,12 @@ def with_max_rejected_ratio(
 
 
 def without_rejected_table(config: DatasetConfig) -> DatasetConfig:
-    target = config.target.model_copy(update={"rejected_table": None})
-    return config.model_copy(update={"target": target})
+    return with_target(config, rejected_table=None)
+
+
+def with_target(config: DatasetConfig, **target: object) -> DatasetConfig:
+    updated = config.target.model_copy(update=target)
+    return config.model_copy(update={"target": updated})
 
 
 class PipelineTestCase(unittest.TestCase):
@@ -545,6 +570,92 @@ class LoadDatasetTest(PipelineTestCase):
             result,
             StageResult(rows_in=LOANS.rows_valid, rows_out=LOANS.rows_valid),
         )
+        self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
+
+    def test_unchanged_schema_loads_with_no_schema_change(self) -> None:
+        config = without_rejected_table(self.config)
+        schema = list(table_spec(config).schema)
+        client = existing_client(config, schema, LOANS.rows_valid)
+
+        result = load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(result.schema_changes, ())
+        self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
+
+    def test_additive_change_loads_and_is_listed(self) -> None:
+        config = without_rejected_table(self.config)
+        *older, last = table_spec(config).schema
+        client = existing_client(config, older, LOANS.rows_valid)
+
+        result = load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            result.schema_changes, (f"{last.name}: added as NULLABLE",)
+        )
+        self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
+
+    def test_additive_change_fails_when_none_is_allowed(self) -> None:
+        config = with_target(self.config, schema_change="none")
+        *older, last = table_spec(config).schema
+        client = existing_client(config, older, LOANS.rows_valid)
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{VALID_LABEL}: additive schema change, "
+                "target.schema_change is none",
+                f"{VALID_LABEL}: {last.name}: added as NULLABLE",
+                f"{VALID_LABEL}: rerun with --allow-schema-change to "
+                "replace the schema",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
+        # The rejected table is not even created.
+        client.create_table.assert_not_called()
+
+    def test_breaking_change_fails_before_any_load(self) -> None:
+        config = self.config
+        schema = [
+            *table_spec(config).schema,
+            bigquery.SchemaField("old", "STRING"),
+        ]
+        client = existing_client(config, schema, LOANS.rows_valid)
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception).splitlines()[:2],
+            [
+                f"{VALID_LABEL}: breaking schema change",
+                f"{VALID_LABEL}: old: removed",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
+        client.create_table.assert_not_called()
+
+    def test_allow_schema_change_loads_a_breaking_change(self) -> None:
+        config = without_rejected_table(
+            with_target(self.config, schema_change="none")
+        )
+        schema = [
+            *table_spec(config).schema,
+            bigquery.SchemaField("old", "STRING"),
+        ]
+        client = existing_client(config, schema, LOANS.rows_valid)
+
+        result = load_dataset(
+            config,
+            self.data_dir,
+            client,
+            "dataset",
+            allow_schema_change=True,
+        )
+
+        self.assertEqual(result.schema_changes, ("old: removed",))
         self.assertEqual(self.loaded_tables(client), [VALID_TABLE])
 
     def test_without_rejected_table_the_rejected_file_is_unused(
