@@ -1,6 +1,8 @@
 """BigQuery schema and table layout derived from a dataset config."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from google.cloud import bigquery
 
@@ -78,6 +80,133 @@ def bigquery_rejected_schema(
         bigquery.SchemaField("reasons", "STRING", mode="REPEATED"),
         bigquery.SchemaField("raw", "RECORD", mode="REQUIRED", fields=raw),
     ]
+
+
+@dataclass(frozen=True)
+class SchemaDifference:
+    """One way an existing table differs from the expected schema."""
+
+    # Dotted for nested fields, e.g. "raw.city"; "" for the top level.
+    path: str
+    message: str
+    breaking: bool
+
+
+@dataclass(frozen=True)
+class SchemaDiff:
+    """Every difference between an existing and an expected schema."""
+
+    differences: tuple[SchemaDifference, ...]
+
+    @property
+    def kind(self) -> Literal["none", "additive", "breaking"]:
+        if any(item.breaking for item in self.differences):
+            return "breaking"
+        return "additive" if self.differences else "none"
+
+
+# The API returns the legacy names; the specs use the standard ones.
+_STANDARD_TYPES = {
+    "INTEGER": "INT64",
+    "FLOAT": "FLOAT64",
+    "BOOLEAN": "BOOL",
+    "STRUCT": "RECORD",
+}
+
+
+def compare_schema(
+    actual: Sequence[bigquery.SchemaField],
+    expected: Sequence[bigquery.SchemaField],
+) -> SchemaDiff:
+    """Compare the schema of an existing table with the expected one.
+
+    Additive differences are those BigQuery itself accepts when it
+    updates a schema on append: a NULLABLE or REPEATED field added after
+    the existing ones, or a REQUIRED field relaxed to NULLABLE. Anything
+    else is breaking: a field removed (a rename is a removal plus an
+    addition), retyped, made REQUIRED, added before existing fields, or
+    moved. RECORD fields are compared field by field. Names are case
+    sensitive.
+    """
+    return SchemaDiff(tuple(_differences(actual, expected, "")))
+
+
+def _differences(
+    actual: Sequence[bigquery.SchemaField],
+    expected: Sequence[bigquery.SchemaField],
+    prefix: str,
+) -> list[SchemaDifference]:
+    wanted = {field.name: field for field in expected}
+    differences = []
+    for field in actual:
+        path = prefix + field.name
+        if field.name not in wanted:
+            differences.append(SchemaDifference(path, "removed", True))
+        else:
+            differences += _field_differences(field, wanted[field.name], path)
+
+    existing = {field.name for field in actual}
+    kept = [field.name for field in expected if field.name in existing]
+    if kept != [field.name for field in actual if field.name in wanted]:
+        differences.append(
+            SchemaDifference(
+                prefix.removesuffix("."),
+                "columns are in a different order",
+                True,
+            )
+        )
+
+    for index, field in enumerate(expected):
+        if field.name in existing:
+            continue
+        path = prefix + field.name
+        later = [other.name for other in expected[index + 1 :]]
+        if any(name in existing for name in later):
+            differences.append(
+                SchemaDifference(path, "added before existing columns", True)
+            )
+        else:
+            differences.append(
+                SchemaDifference(
+                    path,
+                    f"added as {field.mode}",
+                    field.mode == "REQUIRED",
+                )
+            )
+    return differences
+
+
+def _field_differences(
+    actual: bigquery.SchemaField,
+    expected: bigquery.SchemaField,
+    path: str,
+) -> list[SchemaDifference]:
+    actual_type = _standard_type(actual.field_type)
+    expected_type = _standard_type(expected.field_type)
+    if actual_type != expected_type:
+        return [
+            SchemaDifference(
+                path, f"type {actual_type}, config says {expected_type}", True
+            )
+        ]
+    differences = []
+    if actual.mode != expected.mode:
+        relaxed = (actual.mode, expected.mode) == ("REQUIRED", "NULLABLE")
+        differences.append(
+            SchemaDifference(
+                path,
+                f"mode {actual.mode}, config says {expected.mode}",
+                not relaxed,
+            )
+        )
+    if actual_type == "RECORD":
+        differences += _differences(actual.fields, expected.fields, f"{path}.")
+    return differences
+
+
+def _standard_type(field_type: str | None) -> str:
+    name = (field_type or "").upper()
+    return _STANDARD_TYPES.get(name, name)
 
 
 def _field(
