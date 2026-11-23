@@ -356,9 +356,10 @@ column breaks downstream queries without failing the run.
       BigQuery client faked; `gcp` test creates a temporary table with
       an older schema and checks both outcomes; document exit code 9 in
       `--help` and the README `[test]`
-- [ ] Release `v1.6.0`: version bump, `CHANGELOG.md` section, annotated
-      tag. If the default chosen above blocks a change that used to load,
-      decide first whether that is a MAJOR bump `[chore]`
+- [x] Release `v1.6.0`: version bump, `CHANGELOG.md` section, annotated
+      tag. MINOR, not MAJOR: every v1.5.0 config stays valid and a table
+      it created compares as unchanged, so only a later breaking config
+      edit meets the new exit code 9 `[chore]`
 
 Exit: a fixture run against a table with a breaking difference exits
 with code 9 and leaves the BigQuery tables untouched; an additive change
