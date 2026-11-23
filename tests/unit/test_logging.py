@@ -195,6 +195,27 @@ class PrettyFormatterTest(unittest.TestCase):
             "schema changed (x: added as NULLABLE; y: removed)  9.1s",
         )
 
+    def test_load_lists_the_rejected_table_schema_changes(self) -> None:
+        line = pretty_line(
+            "stage_completed",
+            stage="load",
+            dataset="d",
+            rows_in=7,
+            rows_out=7,
+            rows_rejected=0,
+            schema_changes=[],
+            rejected_table="d_rejected",
+            rejected_rows_loaded=3,
+            rejected_schema_changes=["raw.x: added as NULLABLE"],
+            duration_s=9.1,
+        )
+
+        self.assertEqual(
+            line,
+            "load       d  in 7  out 7  rejected loaded 3 into d_rejected  "
+            "rejected schema changed (raw.x: added as NULLABLE)  9.1s",
+        )
+
     def test_load_without_schema_changes_does_not_mention_them(self) -> None:
         line = pretty_line(
             "stage_completed",

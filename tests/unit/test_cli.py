@@ -601,6 +601,8 @@ class PipelineCommandsTest(unittest.TestCase):
                 load = self.events(result)[-1]
                 self.assertEqual(load["stage"], "load")
                 self.assertEqual(load["schema_changes"], ["old: removed"])
+                # Created by this load, so it has nothing to compare.
+                self.assertNotIn("rejected_schema_changes", load)
 
     def test_missing_credentials_exit_with_six(self) -> None:
         self.client_factory.side_effect = DefaultCredentialsError("no ADC")

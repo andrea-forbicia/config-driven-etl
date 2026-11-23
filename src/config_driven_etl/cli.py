@@ -275,6 +275,10 @@ def _load(job: _Job, allow_schema_change: bool) -> None:
             "rejected_table": job.config.target.rejected_table,
             "rejected_rows_loaded": result.rejected_rows_loaded,
         }
+        if result.rejected_schema_changes is not None:
+            extra["rejected_schema_changes"] = list(
+                result.rejected_schema_changes
+            )
     _finish_stage(job, "load", result, started, **extra)
 
 

@@ -25,7 +25,10 @@ and this project adheres to
   non-nullable column made nullable. Anything else is breaking and is
   only applied with `--allow-schema-change` on `load` or `run`, for that
   run. Accepted changes are listed as `schema_changes` in the load
-  stage line.
+  stage line. The same check, setting and flag apply to
+  `target.rejected_table` (its accepted changes are listed as
+  `rejected_schema_changes`); both tables are checked before any load,
+  and one message lists every table whose change is not allowed.
 
 ### Changed
 
