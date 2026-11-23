@@ -93,6 +93,9 @@ def _render_stage(event: str, fields: dict[str, Any]) -> str:
             f"{reason} {rows}" for reason, rows in fields["rejections"].items()
         )
         parts.append(f"({reasons})")
+    if fields.get("dropped_columns"):
+        names = ", ".join(f"'{name}'" for name in fields["dropped_columns"])
+        parts.append(f"dropped {names}")
     if "rejected_rows_loaded" in fields:
         parts.append(
             f"rejected loaded {fields['rejected_rows_loaded']} "

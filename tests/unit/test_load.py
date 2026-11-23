@@ -946,6 +946,11 @@ class AppendRowsTest(unittest.TestCase):
             bigquery.WriteDisposition.WRITE_APPEND,
         )
         self.assertEqual(job_config.schema, list(target_spec().schema))
+        # A table made by an older version gains the new fields.
+        self.assertEqual(
+            job_config.schema_update_options,
+            [bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION],
+        )
         self.job.result.assert_called_once_with()
 
     def test_row_count_mismatch_fails(self) -> None:

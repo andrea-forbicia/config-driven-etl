@@ -143,6 +143,40 @@ class PrettyFormatterTest(unittest.TestCase):
             "(id: null 2, id: duplicate 1)  0.0s",
         )
 
+    def test_transform_lists_its_dropped_columns(self) -> None:
+        line = pretty_line(
+            "stage_completed",
+            stage="transform",
+            dataset="d",
+            rows_in=10,
+            rows_out=10,
+            rows_rejected=0,
+            rejections={},
+            dropped_columns=["Internal Note", "Extra"],
+            duration_s=0.04,
+        )
+
+        self.assertEqual(
+            line,
+            "transform  d  in 10  out 10  rejected 0  "
+            "dropped 'Internal Note', 'Extra'  0.0s",
+        )
+
+    def test_no_dropped_columns_are_not_mentioned(self) -> None:
+        line = pretty_line(
+            "stage_completed",
+            stage="transform",
+            dataset="d",
+            rows_in=10,
+            rows_out=10,
+            rows_rejected=0,
+            rejections={},
+            dropped_columns=[],
+            duration_s=0.04,
+        )
+
+        self.assertNotIn("dropped", line)
+
     def test_load_names_the_rejected_table(self) -> None:
         line = pretty_line(
             "stage_completed",

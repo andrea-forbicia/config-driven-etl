@@ -1323,6 +1323,18 @@ class TransformTest(unittest.TestCase):
             }
         )
 
+    def test_reports_the_dropped_source_columns(self) -> None:
+        raw = self.raw.with_columns(pl.lit("e").alias("Extra"))
+
+        result = transform(raw, self.config)
+
+        self.assertEqual(result.dropped_columns, ("Notes", "Extra"))
+
+    def test_no_dropped_columns_when_every_column_is_mapped(self) -> None:
+        result = transform(self.raw.drop("Notes"), self.config)
+
+        self.assertEqual(result.dropped_columns, ())
+
     def collect(self) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
         result = transform(self.raw, self.config)
         valid, rejected, counts = pl.collect_all(

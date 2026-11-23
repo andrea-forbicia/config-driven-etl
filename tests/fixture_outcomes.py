@@ -21,6 +21,8 @@ class FixtureOutcome:
     rows_valid: int
     # A row with several reasons counts once under each of them.
     rejections: Mapping[str, int]
+    # Unmapped source columns, in header order.
+    dropped_columns: tuple[str, ...] = ()
 
     @property
     def rows_rejected(self) -> int:
@@ -56,6 +58,7 @@ OUTCOMES: Mapping[str, FixtureOutcome] = {
             "loan_id: invalid int": 1,
             "renewals: above max": 1,
         },
+        dropped_columns=("Internal Note",),
     ),
 }
 

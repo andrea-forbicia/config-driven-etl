@@ -14,6 +14,7 @@ from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import (
     AUDIT_TABLE_SPEC,
+    TableSpec,
     rejected_table_spec,
     table_spec,
 )
@@ -233,6 +234,42 @@ class BigQueryLoadTest(unittest.TestCase):
                     },
                     {"loan_id: duplicate": 1, "fine_eur: below min": 1},
                 )
+
+    def test_older_audit_table_gains_the_new_fields(self) -> None:
+        table_id = self.temporary_table("etl_runs")
+        # The audit schema of v1.5.0, before stages.dropped_columns.
+        older = TableSpec(
+            schema=tuple(
+                bigquery.SchemaField(
+                    field.name,
+                    field.field_type,
+                    mode=field.mode,
+                    fields=[
+                        sub
+                        for sub in field.fields
+                        if sub.name != "dropped_columns"
+                    ],
+                )
+                for field in AUDIT_TABLE_SPEC.schema
+            ),
+            partition_by=None,
+            cluster_by=(),
+        )
+        ensure_table(self.client, table_id, older)
+        recorder = RunRecorder("run", "0.0.0")
+        recorder.start("transform")
+        result = StageResult(
+            rows_in=1, rows_out=1, dropped_columns=("Internal Note",)
+        )
+        recorder.record("transform", result, 0.5)
+        row = audit_row(recorder.finish(0, None))
+
+        append_rows(self.client, table_id, AUDIT_TABLE_SPEC, [row])
+
+        (stored,) = self.read_table(table_id).drop("started_at").to_dicts()
+        self.assertEqual(
+            stored["stages"][0]["dropped_columns"], ["Internal Note"]
+        )
 
 
 if __name__ == "__main__":
