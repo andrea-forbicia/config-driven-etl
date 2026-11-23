@@ -12,6 +12,7 @@ from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import (
     bigquery_rejected_schema,
+    rejected_table_spec,
     table_spec,
 )
 from config_driven_etl.dataset_config import (
@@ -72,17 +73,33 @@ def fake_client(*table_rows: int) -> mock.MagicMock:
 def existing_client(
     config: DatasetConfig,
     schema: list[bigquery.SchemaField],
-    rows: int,
+    rejected_schema: list[bigquery.SchemaField] | None = None,
 ) -> mock.MagicMock:
-    """A client whose target table exists with schema, then holds rows."""
+    """A client whose target table exists with schema.
+
+    With config.target.rejected_table, the rejected table exists with
+    rejected_schema, or is missing when it is None. Both tables then hold
+    the fixture's rows.
+    """
     spec = table_spec(config)
     table = bigquery.Table(VALID_TABLE, schema=schema)
     table.clustering_fields = list(spec.cluster_by) or None
-    loaded = mock.create_autospec(bigquery.Table, instance=True)
-    loaded.num_rows = rows
+    answers: list[object] = [table]
+    counts = [LOANS.rows_valid]
+    if config.target.rejected_table is not None:
+        answers.append(
+            NotFound("no rejected table")
+            if rejected_schema is None
+            else bigquery.Table(REJECTED_TABLE, schema=rejected_schema)
+        )
+        counts.append(LOANS.rows_rejected)
+    for rows in counts:
+        loaded = mock.create_autospec(bigquery.Table, instance=True)
+        loaded.num_rows = rows
+        answers.append(loaded)
     client = mock.create_autospec(bigquery.Client, instance=True)
     client.project = "project"
-    client.get_table.side_effect = [table, loaded]
+    client.get_table.side_effect = answers
     return client
 
 
@@ -575,7 +592,7 @@ class LoadDatasetTest(PipelineTestCase):
     def test_unchanged_schema_loads_with_no_schema_change(self) -> None:
         config = without_rejected_table(self.config)
         schema = list(table_spec(config).schema)
-        client = existing_client(config, schema, LOANS.rows_valid)
+        client = existing_client(config, schema)
 
         result = load_dataset(config, self.data_dir, client, "dataset")
 
@@ -585,7 +602,7 @@ class LoadDatasetTest(PipelineTestCase):
     def test_additive_change_loads_and_is_listed(self) -> None:
         config = without_rejected_table(self.config)
         *older, last = table_spec(config).schema
-        client = existing_client(config, older, LOANS.rows_valid)
+        client = existing_client(config, older)
 
         result = load_dataset(config, self.data_dir, client, "dataset")
 
@@ -597,7 +614,18 @@ class LoadDatasetTest(PipelineTestCase):
     def test_additive_change_fails_when_none_is_allowed(self) -> None:
         config = with_target(self.config, schema_change="none")
         *older, last = table_spec(config).schema
-        client = existing_client(config, older, LOANS.rows_valid)
+        row_number, reasons, raw = rejected_table_spec(config).schema
+        older_raw = raw.to_api_repr()
+        older_raw["fields"] = older_raw["fields"][:-1]
+        client = existing_client(
+            config,
+            older,
+            [
+                row_number,
+                reasons,
+                bigquery.SchemaField.from_api_repr(older_raw),
+            ],
+        )
 
         with self.assertRaises(SchemaDriftError) as context:
             load_dataset(config, self.data_dir, client, "dataset")
@@ -608,13 +636,13 @@ class LoadDatasetTest(PipelineTestCase):
                 f"{VALID_LABEL}: additive schema change, "
                 "target.schema_change is none",
                 f"{VALID_LABEL}: {last.name}: added as NULLABLE",
-                f"{VALID_LABEL}: rerun with --allow-schema-change to "
-                "replace the schema",
+                f"{REJECTED_LABEL}: additive schema change, "
+                "target.schema_change is none",
+                f"{REJECTED_LABEL}: raw.{last.name}: added as NULLABLE",
+                "rerun with --allow-schema-change to replace the schemas",
             ],
         )
         client.load_table_from_file.assert_not_called()
-        # The rejected table is not even created.
-        client.create_table.assert_not_called()
 
     def test_breaking_change_fails_before_any_load(self) -> None:
         config = self.config
@@ -622,7 +650,7 @@ class LoadDatasetTest(PipelineTestCase):
             *table_spec(config).schema,
             bigquery.SchemaField("old", "STRING"),
         ]
-        client = existing_client(config, schema, LOANS.rows_valid)
+        client = existing_client(config, schema)
 
         with self.assertRaises(SchemaDriftError) as context:
             load_dataset(config, self.data_dir, client, "dataset")
@@ -635,7 +663,64 @@ class LoadDatasetTest(PipelineTestCase):
             ],
         )
         client.load_table_from_file.assert_not_called()
-        client.create_table.assert_not_called()
+
+    def test_breaking_change_in_the_rejected_table_fails(self) -> None:
+        config = self.config
+        rejected = [
+            *rejected_table_spec(config).schema,
+            bigquery.SchemaField("old", "STRING"),
+        ]
+        client = existing_client(
+            config, list(table_spec(config).schema), rejected
+        )
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{REJECTED_LABEL}: breaking schema change",
+                f"{REJECTED_LABEL}: old: removed",
+                "rerun with --allow-schema-change to replace the schemas",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
+
+    def test_rejected_table_changes_are_listed_apart(self) -> None:
+        config = self.config
+        rejected = [
+            *rejected_table_spec(config).schema,
+            bigquery.SchemaField("old", "STRING"),
+        ]
+        client = existing_client(
+            config, list(table_spec(config).schema), rejected
+        )
+
+        result = load_dataset(
+            config,
+            self.data_dir,
+            client,
+            "dataset",
+            allow_schema_change=True,
+        )
+
+        self.assertEqual(
+            (result.schema_changes, result.rejected_schema_changes),
+            ((), ("old: removed",)),
+        )
+        self.assertEqual(
+            self.loaded_tables(client), [VALID_TABLE, REJECTED_TABLE]
+        )
+
+    def test_new_rejected_table_has_no_schema_changes(self) -> None:
+        config = self.config
+        client = existing_client(config, list(table_spec(config).schema))
+
+        result = load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(result.schema_changes, ())
+        self.assertIsNone(result.rejected_schema_changes)
 
     def test_allow_schema_change_loads_a_breaking_change(self) -> None:
         config = without_rejected_table(
@@ -645,7 +730,7 @@ class LoadDatasetTest(PipelineTestCase):
             *table_spec(config).schema,
             bigquery.SchemaField("old", "STRING"),
         ]
-        client = existing_client(config, schema, LOANS.rows_valid)
+        client = existing_client(config, schema)
 
         result = load_dataset(
             config,

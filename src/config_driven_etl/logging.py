@@ -104,6 +104,9 @@ def _render_stage(event: str, fields: dict[str, Any]) -> str:
             f"rejected loaded {fields['rejected_rows_loaded']} "
             f"into {fields.get('rejected_table')}"
         )
+    if fields.get("rejected_schema_changes"):
+        changes = "; ".join(fields["rejected_schema_changes"])
+        parts.append(f"rejected schema changed ({changes})")
     parts.append(_seconds(fields.get("duration_s")))
     if event == "stage_failed":
         parts.append("FAILED")
