@@ -352,7 +352,7 @@ column breaks downstream queries without failing the run.
 - [x] Apply the same check to `rejected_table`, with the same
       `target.schema_change` and `--allow-schema-change`; both tables
       are checked before any load and reported in one message `[feat]`
-- [ ] System tests for an additive and a breaking change with the
+- [x] System tests for an additive and a breaking change with the
       BigQuery client faked; `gcp` test creates a temporary table with
       an older schema and checks both outcomes; document exit code 9 in
       `--help` and the README `[test]`

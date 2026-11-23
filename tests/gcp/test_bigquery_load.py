@@ -9,6 +9,7 @@ from pathlib import Path
 import google.auth
 import polars as pl
 import pytest
+import requests
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import bigquery
 
@@ -35,8 +36,12 @@ from config_driven_etl.load import (
 )
 from config_driven_etl.pipeline import (
     RunRecorder,
+    SchemaDriftError,
     StageResult,
     audit_row,
+    extract_dataset,
+    load_dataset,
+    transform_dataset,
 )
 from config_driven_etl.settings import Settings
 from config_driven_etl.transform import (
@@ -252,6 +257,81 @@ class BigQueryLoadTest(unittest.TestCase):
 
                 diff = compare_schema(schema, spec.schema)
                 self.assertEqual(diff.differences, ())
+
+    def test_schema_changes_on_real_tables(self) -> None:
+        config = fixture_config("library_loans")
+        tables = {
+            key: self.temporary_table(key).rsplit(".", 1)[1]
+            for key in ("table", "rejected_table")
+        }
+        full = config.model_copy(
+            update={"target": config.target.model_copy(update=tables)}
+        )
+        *columns, last = full.columns
+        older = full.model_copy(update={"columns": tuple(columns)})
+
+        def run(
+            config: DatasetConfig, allow_schema_change: bool = False
+        ) -> StageResult:
+            with requests.Session() as session:
+                extract_dataset(config, self.data_dir, session)
+            transform_dataset(config, self.data_dir)
+            return load_dataset(
+                config,
+                self.data_dir,
+                self.client,
+                self.dataset,
+                allow_schema_change=allow_schema_change,
+            )
+
+        def assert_tables_match(config: DatasetConfig) -> None:
+            for name, spec in [
+                (tables["table"], table_spec(config)),
+                (tables["rejected_table"], rejected_table_spec(config)),
+            ]:
+                table_id = bigquery_table_id(
+                    self.client.project, self.dataset, name
+                )
+                schema = self.client.get_table(table_id).schema
+                diff = compare_schema(schema, spec.schema)
+                self.assertEqual(diff.differences, (), name)
+
+        run(older)
+
+        added = run(full)
+
+        self.assertEqual(
+            (added.schema_changes, added.rejected_schema_changes),
+            (
+                (f"{last.name}: added as NULLABLE",),
+                (f"raw.{last.name}: added as NULLABLE",),
+            ),
+        )
+        assert_tables_match(full)
+
+        def table_states() -> list[tuple[object, object]]:
+            # A load job updates modified even when the rows are the same.
+            states = []
+            for name in tables.values():
+                table = self.client.get_table(
+                    bigquery_table_id(self.client.project, self.dataset, name)
+                )
+                states.append((table.modified, table.num_rows))
+            return states
+
+        before = table_states()
+        with self.assertRaises(SchemaDriftError):
+            run(older)
+        assert_tables_match(full)
+        self.assertEqual(table_states(), before)
+
+        removed = run(older, allow_schema_change=True)
+
+        self.assertEqual(
+            (removed.schema_changes, removed.rejected_schema_changes),
+            ((f"{last.name}: removed",), (f"raw.{last.name}: removed",)),
+        )
+        assert_tables_match(older)
 
     def test_older_audit_table_gains_the_new_fields(self) -> None:
         table_id = self.temporary_table("etl_runs")
