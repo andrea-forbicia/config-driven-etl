@@ -16,8 +16,12 @@ from google.api_core.exceptions import NotFound
 from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
-from config_driven_etl.bq_schema import bigquery_rejected_schema
+from config_driven_etl.bq_schema import (
+    bigquery_rejected_schema,
+    bigquery_schema,
+)
 from config_driven_etl.cli import app
+from config_driven_etl.dataset_config import DatasetConfig
 from config_driven_etl.transform import output_schema, rejected_schema
 from fixture_outcomes import OUTCOMES, fixture_config, fixture_path
 
@@ -65,8 +69,10 @@ class FakeBigQuery:
         job_config: bigquery.LoadJobConfig,
     ) -> mock.MagicMock:
         self.job_configs.append(job_config)
-        # WRITE_TRUNCATE: the file replaces whatever the table held.
+        # WRITE_TRUNCATE: the file and the job's schema replace whatever
+        # the table held.
         self.data[table_id] = pl.read_parquet(io.BytesIO(file.read()))
+        self.tables[table_id].schema = job_config.schema
         return mock.create_autospec(bigquery.LoadJob, instance=True)
 
     def load_table_from_json(
@@ -130,12 +136,27 @@ class RunCommandTest(unittest.TestCase):
         if csv is not None:
             source = config.source.model_copy(update={"path": csv})
             gated = gated.model_copy(update={"source": source})
-        path = self.directory / f"{name}_gated.yaml"
+        return self.write_config(gated, f"{name}_gated.yaml")
+
+    def without_last_column(self, name: str) -> Path:
+        """A copy of a fixture's YAML without its last, nullable column."""
+        config = fixture_config(name)
+        *columns, last = config.columns
+        # Removing a nullable last column, then restoring it, is additive.
+        self.assertTrue(last.nullable)
+        older = config.model_copy(update={"columns": tuple(columns)})
+        return self.write_config(older, f"{name}_older.yaml")
+
+    def write_config(self, config: DatasetConfig, filename: str) -> Path:
+        path = self.directory / filename
         path.write_text(
-            yaml.safe_dump(gated.model_dump(mode="json", exclude_none=True)),
+            yaml.safe_dump(config.model_dump(mode="json", exclude_none=True)),
             encoding="utf-8",
         )
         return path
+
+    def table_schema(self, table: str) -> list[bigquery.SchemaField]:
+        return list(self.bigquery.tables[f"project.dataset.{table}"].schema)
 
     def summary(self, result: Result) -> dict[str, Any]:
         """The run_finished line, without the log envelope."""
@@ -321,6 +342,75 @@ class RunCommandTest(unittest.TestCase):
         self.assertEqual(
             self.rejected("library_loans").height, outcome.rows_rejected
         )
+
+    def test_added_nullable_column_extends_both_tables(self) -> None:
+        name = "library_loans"
+        config = fixture_config(name)
+        older = self.without_last_column(name)
+        result = CliRunner().invoke(app, ["run", str(older)])
+        self.assertEqual(result.exit_code, 0, result.output)
+
+        result = self.run_dataset(name)
+
+        last = config.columns[-1].name
+        load = self.events(result)[-1]
+        self.assertEqual(
+            (load["schema_changes"], load["rejected_schema_changes"]),
+            (
+                [f"{last}: added as NULLABLE"],
+                [f"raw.{last}: added as NULLABLE"],
+            ),
+        )
+        self.assertEqual(
+            self.table_schema(config.target.table), bigquery_schema(config)
+        )
+        assert config.target.rejected_table is not None
+        self.assertEqual(
+            self.table_schema(config.target.rejected_table),
+            bigquery_rejected_schema(config),
+        )
+
+    def test_removed_column_leaves_the_tables_untouched(self) -> None:
+        name = "library_loans"
+        self.run_dataset(name)
+        loaded = dict(self.bigquery.data)
+        jobs = len(self.bigquery.job_configs)
+        older = self.without_last_column(name)
+
+        result = CliRunner().invoke(app, ["run", str(older)])
+
+        self.assertEqual(result.exit_code, 9, result.output)
+        failure = self.events(result)[-1]
+        last = fixture_config(name).columns[-1].name
+        self.assertEqual(failure["category"], "schema_drift")
+        self.assertIn(f"{last}: removed", failure["error"])
+        self.assertIn(f"raw.{last}: removed", failure["error"])
+        self.assertEqual(len(self.bigquery.job_configs), jobs)
+        for table_id, frame in self.bigquery.data.items():
+            with self.subTest(table=table_id):
+                self.assertTrue(frame.equals(loaded[table_id]))
+
+    def test_allow_schema_change_removes_the_column(self) -> None:
+        name = "library_loans"
+        self.run_dataset(name)
+        older = self.without_last_column(name)
+
+        result = CliRunner().invoke(
+            app, ["run", str(older), "--allow-schema-change"]
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        config = fixture_config(name)
+        last = config.columns[-1].name
+        load = self.events(result)[-1]
+        self.assertEqual(
+            (load["schema_changes"], load["rejected_schema_changes"]),
+            ([f"{last}: removed"], [f"raw.{last}: removed"]),
+        )
+        table = self.table_schema(config.target.table)
+        self.assertNotIn(last, [field.name for field in table])
+        loaded = self.bigquery.data[f"project.dataset.{config.target.table}"]
+        self.assertNotIn(last, loaded.columns)
 
     def test_header_only_source_leaves_the_tables_untouched(self) -> None:
         self.run_dataset("library_loans")
