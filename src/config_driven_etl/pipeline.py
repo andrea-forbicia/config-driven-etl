@@ -2,6 +2,7 @@
 
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from google.cloud import bigquery
 
 from config_driven_etl.bq_schema import (
     TableSpec,
+    compare_schema,
     rejected_table_spec,
     table_spec,
 )
@@ -57,6 +59,9 @@ class StageResult:
     rejected_rows_loaded: int | None = None
     # Unmapped source columns the transform dropped; None in other stages.
     dropped_columns: tuple[str, ...] | None = None
+    # How the load changed the schema of an existing target table; None
+    # in other stages and when the load created the table.
+    schema_changes: tuple[str, ...] | None = None
 
 
 Stage = Literal["extract", "transform", "load"]
@@ -179,6 +184,10 @@ def audit_row(summary: RunSummary) -> dict[str, object]:
             for record in summary.stages
         ],
     }
+
+
+class SchemaDriftError(Exception):
+    """A load would change a table's schema more than the config allows."""
 
 
 class QualityGateError(Exception):
@@ -324,12 +333,17 @@ def load_dataset(
     data_dir: Path,
     client: bigquery.Client,
     dataset: str,
+    *,
+    allow_schema_change: bool = False,
 ) -> StageResult:
     """Load the processed Parquet into BigQuery and check the row count.
 
     With target.rejected_table, the rejected rows are loaded next, into
-    their own table. Both files are read and both table layouts checked
-    first, so those failures leave both tables unchanged.
+    their own table. Both files are read, both table layouts checked and
+    the schema of an existing target table compared with the config
+    first, so those failures leave both tables unchanged. A schema change
+    above target.schema_change raises SchemaDriftError, unless
+    allow_schema_change accepts any change for this load.
     """
     path = processed_parquet_path(data_dir, config.name)
     if not path.is_file():
@@ -357,9 +371,17 @@ def load_dataset(
             spec=rejected_table_spec(config),
         )
 
-    for load in (valid, rejected):
-        if load is not None:
-            ensure_table(client, load.table_id, load.spec)
+    existing = ensure_table(client, valid.table_id, valid.spec)
+    changes = None
+    if existing is not None:
+        changes = _schema_changes(
+            valid,
+            existing,
+            config.target.schema_change,
+            allow_schema_change,
+        )
+    if rejected is not None:
+        ensure_table(client, rejected.table_id, rejected.spec)
     _load_and_verify(client, valid)
     if rejected is not None:
         try:
@@ -374,6 +396,7 @@ def load_dataset(
         rows_in=valid.rows,
         rows_out=valid.rows,
         rejected_rows_loaded=None if rejected is None else rejected.rows,
+        schema_changes=changes,
     )
 
 
@@ -385,6 +408,44 @@ class _TableLoad:
     rows: int
     table_id: str
     spec: TableSpec
+
+
+def _schema_changes(
+    load: _TableLoad,
+    existing: Sequence[bigquery.SchemaField],
+    allowed: Literal["none", "additive"],
+    allow_any: bool,
+) -> tuple[str, ...]:
+    """How the load changes the table's schema, if it is allowed to."""
+    diff = compare_schema(existing, load.spec.schema)
+    changes = tuple(
+        f"{item.path}: {item.message}" if item.path else item.message
+        for item in diff.differences
+    )
+    if (
+        allow_any
+        or diff.kind == "none"
+        or (diff.kind == "additive" and allowed == "additive")
+    ):
+        return changes
+    label = table_label(load.table_id)
+    # No config value allows a breaking change, so the setting is named
+    # only when changing it would help.
+    reason = (
+        "breaking schema change"
+        if diff.kind == "breaking"
+        else f"additive schema change, target.schema_change is {allowed}"
+    )
+    raise SchemaDriftError(
+        "\n".join(
+            [
+                f"{label}: {reason}",
+                *(f"{label}: {change}" for change in changes),
+                f"{label}: rerun with --allow-schema-change to replace "
+                "the schema",
+            ]
+        )
+    )
 
 
 def _load_and_verify(client: bigquery.Client, load: _TableLoad) -> None:

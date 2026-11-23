@@ -14,9 +14,14 @@ from google.cloud import bigquery
 from typer.testing import CliRunner, Result
 
 from config_driven_etl import __version__
-from config_driven_etl.bq_schema import AUDIT_TABLE_SPEC
+from config_driven_etl.bq_schema import AUDIT_TABLE_SPEC, table_spec
 from config_driven_etl.cli import ExitCode, app
-from fixture_outcomes import FIXTURES, OUTCOMES, fixture_path
+from fixture_outcomes import (
+    FIXTURES,
+    OUTCOMES,
+    fixture_config,
+    fixture_path,
+)
 
 # Rich forces colors on CI runners, splitting option names with ANSI codes.
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
@@ -546,6 +551,56 @@ class PipelineCommandsTest(unittest.TestCase):
             [stage["stage"] for stage in summary["stages"]],
             ["extract", "transform"],
         )
+
+    def table_with_an_old_column(self) -> None:
+        """The target table exists with one column the config removed."""
+        spec = table_spec(fixture_config("library_loans"))
+        table = bigquery.Table(
+            f"{PROJECT}.{BQ_DATASET}.library_loans",
+            schema=[*spec.schema, bigquery.SchemaField("old", "STRING")],
+        )
+        table.clustering_fields = list(spec.cluster_by)
+        answers: list[object] = [table, NotFound("no rejected table")]
+        for rows in (LOANS.rows_valid, LOANS.rows_rejected):
+            loaded = mock.create_autospec(bigquery.Table, instance=True)
+            loaded.num_rows = rows
+            loaded.time_partitioning = None
+            answers.append(loaded)
+        self.client.get_table.side_effect = answers
+
+    def test_blocked_schema_change_exits_with_nine(self) -> None:
+        self.table_with_an_old_column()
+
+        result = self.invoke("run", LIBRARY)
+
+        self.assertEqual(result.exit_code, 9)
+        failure = self.events(result)[-1]
+        self.assertEqual(failure["category"], "schema_drift")
+        self.assertIn("old: removed", failure["error"])
+        self.assertIn("--allow-schema-change", failure["error"])
+        self.client.load_table_from_file.assert_not_called()
+        summary = self.summary(result)
+        self.assertEqual(
+            (summary["category"], summary["failed_stage"]),
+            ("schema_drift", "load"),
+        )
+
+    def test_allow_schema_change_replaces_the_schema(self) -> None:
+        for command in ["load", "run"]:
+            with self.subTest(command=command):
+                self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)
+                self.assertEqual(
+                    self.invoke("transform", LIBRARY).exit_code, 0
+                )
+                self.client.reset_mock()
+                self.table_with_an_old_column()
+
+                result = self.invoke(command, LIBRARY, "--allow-schema-change")
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                load = self.events(result)[-1]
+                self.assertEqual(load["stage"], "load")
+                self.assertEqual(load["schema_changes"], ["old: removed"])
 
     def test_missing_credentials_exit_with_six(self) -> None:
         self.client_factory.side_effect = DefaultCredentialsError("no ADC")

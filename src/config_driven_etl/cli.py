@@ -38,6 +38,7 @@ from config_driven_etl.pipeline import (
     QualityGateError,
     RunRecorder,
     RunSummary,
+    SchemaDriftError,
     Stage,
     StageResult,
     audit_row,
@@ -66,6 +67,7 @@ class ExitCode(IntEnum):
     LOAD = 6
     QUALITY_GATE = 7
     AUDIT = 8
+    SCHEMA_DRIFT = 9
 
 
 _EXIT_CODE_HELP = {
@@ -78,6 +80,7 @@ _EXIT_CODE_HELP = {
     ExitCode.LOAD: "Parquet output or BigQuery load failed",
     ExitCode.QUALITY_GATE: "data failed a quality gate, nothing loaded",
     ExitCode.AUDIT: "run succeeded, audit row not appended",
+    ExitCode.SCHEMA_DRIFT: "table schema change not allowed, nothing loaded",
 }
 
 # Expected failures by category; anything else is a bug and exits with
@@ -88,6 +91,7 @@ _CATEGORIES: list[tuple[tuple[type[Exception], ...], ExitCode]] = [
     ((TransformError,), ExitCode.TRANSFORM),
     ((LoadError, GoogleAuthError), ExitCode.LOAD),
     ((QualityGateError,), ExitCode.QUALITY_GATE),
+    ((SchemaDriftError,), ExitCode.SCHEMA_DRIFT),
 ]
 
 app = typer.Typer(
@@ -102,6 +106,14 @@ app = typer.Typer(
 DatasetFile = Annotated[
     Path,
     typer.Argument(help="Dataset YAML file.", show_default=False),
+]
+AllowSchemaChange = Annotated[
+    bool,
+    typer.Option(
+        "--allow-schema-change",
+        help="Replace the target table schema whatever the change, for "
+        "this run only.",
+    ),
 ]
 
 
@@ -182,21 +194,25 @@ def transform(dataset: DatasetFile) -> None:
 
 
 @app.command()
-def load(dataset: DatasetFile) -> None:
+def load(
+    dataset: DatasetFile, allow_schema_change: AllowSchemaChange = False
+) -> None:
     """Load the processed Parquet into BigQuery, replacing the table data."""
     with _command("load", dataset) as job:
-        _load(job)
+        _load(job, allow_schema_change)
 
 
 @app.command()
-def run(dataset: DatasetFile) -> None:
+def run(
+    dataset: DatasetFile, allow_schema_change: AllowSchemaChange = False
+) -> None:
     """Extract, transform and load one dataset."""
     with _command("run", dataset) as job:
         # Checked first so a missing setting does not waste a download.
         _bigquery_target(job.settings)
         _extract(job)
         _transform(job)
-        _load(job)
+        _load(job, allow_schema_change)
 
 
 @dataclass(frozen=True)
@@ -239,14 +255,18 @@ def _transform(job: _Job) -> None:
     )
 
 
-def _load(job: _Job) -> None:
+def _load(job: _Job, allow_schema_change: bool) -> None:
     job.recorder.start("load")
     started = time.perf_counter()
     project, dataset = _bigquery_target(job.settings)
     client = _bigquery_client(project)
     with client:
         result = load_dataset(
-            job.config, job.settings.data_dir, client, dataset
+            job.config,
+            job.settings.data_dir,
+            client,
+            dataset,
+            allow_schema_change=allow_schema_change,
         )
     extra: dict[str, object] = {}
     if result.rejected_rows_loaded is not None:
@@ -303,6 +323,8 @@ def _finish_stage(
         fields["rejections"] = result.rejections
     if result.dropped_columns is not None:
         fields["dropped_columns"] = list(result.dropped_columns)
+    if result.schema_changes is not None:
+        fields["schema_changes"] = list(result.schema_changes)
     log_event(event, **fields, **extra)
 
 

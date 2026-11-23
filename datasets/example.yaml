@@ -177,3 +177,15 @@ target:
   # valid rows already loaded. Optional: without it, the rejected rows
   # stay in the Parquet file only.
   rejected_table: city_weather_rejected
+
+  # The most a load may change the schema of an existing `table`, compared
+  # with the columns above. additive: a nullable column added after the
+  # existing ones, or a non-nullable column made nullable. none: no
+  # change at all. Any other change (a column removed, renamed, retyped,
+  # made non-nullable, reordered, or added before the existing ones, or a
+  # non-nullable column added) is breaking. A change above this setting
+  # fails the run with exit code 9 before any load, leaving the tables
+  # untouched; rerun with --allow-schema-change to replace the schema
+  # anyway, for that run only. Accepted changes are listed as
+  # schema_changes in the load stage line. Default: additive.
+  schema_change: additive

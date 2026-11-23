@@ -603,6 +603,20 @@ class EnsureTableTest(unittest.TestCase):
 
         self.client.create_table.assert_not_called()
 
+    def test_returns_the_schema_of_an_existing_table(self) -> None:
+        table = existing_table()
+        table.schema = [bigquery.SchemaField("s", "STRING")]
+        self.client.get_table.return_value = table
+
+        schema = ensure_table(self.client, TABLE_ID, target_spec())
+
+        self.assertEqual(schema, (bigquery.SchemaField("s", "STRING"),))
+
+    def test_returns_no_schema_for_a_created_table(self) -> None:
+        self.client.get_table.side_effect = NotFound("missing")
+
+        self.assertIsNone(ensure_table(self.client, TABLE_ID, target_spec()))
+
     def test_rejects_a_table_with_another_layout(self) -> None:
         cases = {
             "other partition field": (

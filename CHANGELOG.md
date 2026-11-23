@@ -15,6 +15,17 @@ and this project adheres to
   `dropped_columns` (`dropped '<name>', ...` in the pretty format), and
   each stage of the run summary and of the audit row carries them, so a
   new or renamed source header shows even when the run succeeds.
+- Schema drift check before every load: the schema of an existing
+  target table is compared with the one derived from the config. With
+  the new optional `target.schema_change` (`additive`, the default, or
+  `none`), a change beyond it fails the run with the new exit code 9,
+  category `schema_drift`, before any load, and the message lists every
+  column that differs. Additive changes are those BigQuery accepts on
+  append: a nullable column added after the existing ones, or a
+  non-nullable column made nullable. Anything else is breaking and is
+  only applied with `--allow-schema-change` on `load` or `run`, for that
+  run. Accepted changes are listed as `schema_changes` in the load
+  stage line.
 
 ### Changed
 
