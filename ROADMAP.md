@@ -331,12 +331,15 @@ column breaks downstream queries without failing the run.
       so the new field does not break an existing audit table; any other
       audit schema difference is left to the load job (exit code 8)
       `[feat]`
-- [ ] Compare the schema of an existing BigQuery table with the one
-      derived from the config, before any load, and classify the
-      difference: none, additive (new `NULLABLE` columns only) or
-      breaking (column removed, renamed, retyped, reordered, or
-      `NULLABLE` to `REQUIRED`). Pure function in `bq_schema.py`, the
-      `get_table` call stays in `load.py` `[feat]`
+- [x] Compare the schema of an existing BigQuery table with the one
+      derived from the config, and classify the difference with the
+      rule BigQuery applies to schema updates on append: none, additive
+      (a `NULLABLE` or `REPEATED` field added after the existing ones,
+      or `REQUIRED` relaxed to `NULLABLE`) or breaking (anything else:
+      removed, renamed, retyped, reordered, made `REQUIRED`). Pure
+      function in `bq_schema.py`, `RECORD` fields compared field by
+      field; the `get_table` call before the load comes with the next
+      checkbox, in `load.py` `[feat]`
 - [ ] Optional `target.schema_change` in the config: what a load does
       with each class of difference. Decide first the values, the
       default, and whether a breaking change is ever allowed from the

@@ -15,6 +15,7 @@ from google.cloud import bigquery
 from config_driven_etl.bq_schema import (
     AUDIT_TABLE_SPEC,
     TableSpec,
+    compare_schema,
     rejected_table_spec,
     table_spec,
 )
@@ -234,6 +235,23 @@ class BigQueryLoadTest(unittest.TestCase):
                     },
                     {"loan_id: duplicate": 1, "fine_eur: below min": 1},
                 )
+
+    def test_created_tables_match_their_spec(self) -> None:
+        config = fixture_config("library_loans")
+        specs = {
+            "loans": table_spec(config),
+            "loans_rejected": rejected_table_spec(config),
+            "etl_runs": AUDIT_TABLE_SPEC,
+        }
+        for name, spec in specs.items():
+            with self.subTest(table=name):
+                table_id = self.temporary_table(name)
+                ensure_table(self.client, table_id, spec)
+
+                schema = self.client.get_table(table_id).schema
+
+                diff = compare_schema(schema, spec.schema)
+                self.assertEqual(diff.differences, ())
 
     def test_older_audit_table_gains_the_new_fields(self) -> None:
         table_id = self.temporary_table("etl_runs")
