@@ -301,6 +301,8 @@ def _finish_stage(
     }
     if result.rejections is not None:
         fields["rejections"] = result.rejections
+    if result.dropped_columns is not None:
+        fields["dropped_columns"] = list(result.dropped_columns)
     log_event(event, **fields, **extra)
 
 

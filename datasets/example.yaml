@@ -121,7 +121,8 @@ rules:
   # repeats. Default: [] (no deduplication).
   deduplicate_on: [observation_date, station_id]
 
-  # true: CSV columns not listed in `columns` are dropped.
+  # true: CSV columns not listed in `columns` are dropped, and listed as
+  # dropped_columns in the transform stage line and the audit row.
   # false: any CSV column not listed in `columns` fails the run.
   # Default: true.
   drop_unmapped_columns: true

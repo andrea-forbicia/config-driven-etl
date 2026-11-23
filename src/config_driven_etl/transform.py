@@ -73,7 +73,7 @@ def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     missing = [source for source in mapped if source not in available]
     if missing:
         problems.append(f"missing source column: {_quoted(missing)}")
-    unmapped = [name for name in available if name not in mapped]
+    unmapped = _unmapped_columns(available, config)
     if unmapped and not config.rules.drop_unmapped_columns:
         problems.append(f"unmapped source column: {_quoted(unmapped)}")
     if problems:
@@ -82,6 +82,13 @@ def select_columns(lf: pl.LazyFrame, config: DatasetConfig) -> pl.LazyFrame:
     return lf.select(
         pl.col(source).alias(name) for source, name in mapped.items()
     )
+
+
+def _unmapped_columns(
+    available: Sequence[str], config: DatasetConfig
+) -> tuple[str, ...]:
+    mapped = {column.source for column in config.columns}
+    return tuple(name for name in available if name not in mapped)
 
 
 def _quoted(names: Sequence[str]) -> str:
@@ -288,6 +295,8 @@ class TransformResult:
     valid: pl.LazyFrame
     rejected: pl.LazyFrame
     rejection_counts: pl.LazyFrame
+    # Unmapped source columns that were dropped, in header order.
+    dropped_columns: tuple[str, ...] = ()
 
 
 def split_rejected(lf: pl.LazyFrame) -> TransformResult:
@@ -320,9 +329,11 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
 
     Applies every rule of the config and splits the result into valid
     rows, rejected rows and rejection counts; rejected rows follow
-    rejected_schema. Raises TransformError if the input columns do not
-    match the config.
+    rejected_schema. The unmapped source columns that were dropped are
+    listed too. Raises TransformError if the input columns do not match
+    the config.
     """
+    dropped = _unmapped_columns(lf.collect_schema().names(), config)
     lf = keep_raw_values(select_columns(lf, config), config)
     # Duplicates come last: only rows that passed every other rule may
     # claim a key.
@@ -347,7 +358,7 @@ def transform(lf: pl.LazyFrame, config: DatasetConfig) -> TransformResult:
         pl.col(REJECTIONS).alias("reasons"),
         raw.alias("raw"),
     )
-    return replace(result, rejected=rejected)
+    return replace(result, rejected=rejected, dropped_columns=dropped)
 
 
 def _range_failures(column: Column) -> dict[str, pl.Expr]:

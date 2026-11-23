@@ -121,6 +121,9 @@ AUDIT_TABLE_SPEC = TableSpec(
                         _field("rows", "INT64"),
                     ),
                 ),
+                # Fields added later are last and never REQUIRED, so an
+                # audit table made by an older version can gain them.
+                _field("dropped_columns", "STRING", "REPEATED"),
             ),
         ),
     ),

@@ -347,6 +347,11 @@ class PipelineCommandsTest(unittest.TestCase):
             self.assertEqual(event["level"], "info")
             self.assertGreaterEqual(event["duration_s"], 0)
         self.assertEqual(events[1]["rejections"], LOANS.rejections)
+        self.assertEqual(
+            events[1]["dropped_columns"], list(LOANS.dropped_columns)
+        )
+        for event in (events[0], events[2]):
+            self.assertNotIn("dropped_columns", event)
         self.assertEqual(self.client.load_table_from_file.call_count, 2)
 
     def test_logs_where_the_rejected_rows_are(self) -> None:
@@ -483,6 +488,9 @@ class PipelineCommandsTest(unittest.TestCase):
                 self.assertEqual(stage["rows_rejected"], LOANS.rows_rejected)
                 self.assertEqual(stage["rejections"], dict(LOANS.rejections))
                 self.assertEqual(
+                    stage["dropped_columns"], list(LOANS.dropped_columns)
+                )
+                self.assertEqual(
                     stage["rejected_file"],
                     "processed/library_loans/library_loans.rejected.parquet",
                 )
@@ -612,7 +620,11 @@ class PipelineCommandsTest(unittest.TestCase):
             {item["reason"]: item["rows"] for item in transform["rejections"]},
             LOANS.rejections,
         )
+        self.assertEqual(
+            transform["dropped_columns"], list(LOANS.dropped_columns)
+        )
         self.assertEqual(load["rejections"], [])
+        self.assertEqual(load["dropped_columns"], [])
 
     def enable_audit(self, *table_rows: int) -> mock.MagicMock:
         """Set BQ_AUDIT_TABLE; return the job that appends the row."""

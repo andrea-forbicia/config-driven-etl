@@ -324,9 +324,12 @@ dropped without a trace, and `WRITE_TRUNCATE` replaces the schema of an
 existing table with whatever the config says, so a renamed or retyped
 column breaks downstream queries without failing the run.
 
-- [ ] Report source drift: the unmapped source columns that are dropped
+- [x] Report source drift: the unmapped source columns that are dropped
       are listed in the `transform` stage line and in the run summary,
-      so a new or renamed header is visible even when the run succeeds
+      so a new or renamed header is visible even when the run succeeds.
+      The audit append now adds missing fields (`ALLOW_FIELD_ADDITION`),
+      so the new field does not break an existing audit table; any other
+      audit schema difference is left to the load job (exit code 8)
       `[feat]`
 - [ ] Compare the schema of an existing BigQuery table with the one
       derived from the config, before any load, and classify the
@@ -341,12 +344,7 @@ column breaks downstream queries without failing the run.
       fails with a new exit code 9, category `schema_drift`, and leaves
       the tables untouched; the message lists every column that differs.
       Validated, documented in `datasets/example.yaml` `[feat]`
-- [ ] Apply the same check to `rejected_table`, and let the audit table
-      grow with the package: a newer run summary with extra fields
-      appends with `ALLOW_FIELD_ADDITION`, while a breaking difference
-      fails with exit code 8 as today. Decide first whether the audit
-      schema change is detected before the append or left to the load
-      job `[feat]`
+- [ ] Apply the same check to `rejected_table` `[feat]`
 - [ ] System tests for an additive and a breaking change with the
       BigQuery client faked; `gcp` test creates a temporary table with
       an older schema and checks both outcomes; document exit code 9 in

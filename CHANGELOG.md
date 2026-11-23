@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- The unmapped source columns that `drop_unmapped_columns: true` drops
+  are no longer silent: the `transform` stage line lists them as
+  `dropped_columns` (`dropped '<name>', ...` in the pretty format), and
+  each stage of the run summary and of the audit row carries them, so a
+  new or renamed source header shows even when the run succeeds.
+
+### Changed
+
+- The audit append adds the fields that a table created by an earlier
+  version lacks (`ALLOW_FIELD_ADDITION`), so upgrading keeps the same
+  `BQ_AUDIT_TABLE`; any other schema difference still fails the append
+  with exit code 8.
+
 ## [1.5.0] - 2026-11-20
 
 ### Added

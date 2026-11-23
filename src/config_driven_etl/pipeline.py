@@ -55,6 +55,8 @@ class StageResult:
     rejections: dict[str, int] | None = None
     # Rows loaded into target.rejected_table; None without one.
     rejected_rows_loaded: int | None = None
+    # Unmapped source columns the transform dropped; None in other stages.
+    dropped_columns: tuple[str, ...] | None = None
 
 
 Stage = Literal["extract", "transform", "load"]
@@ -172,6 +174,7 @@ def audit_row(summary: RunSummary) -> dict[str, object]:
                         record.result.rejections or {}
                     ).items()
                 ],
+                "dropped_columns": list(record.result.dropped_columns or ()),
             }
             for record in summary.stages
         ],
@@ -240,6 +243,7 @@ def transform_dataset(config: DatasetConfig, data_dir: Path) -> StageResult:
         rows_out=valid.height,
         rows_rejected=rejected.height,
         rejections=dict(counts.iter_rows()),
+        dropped_columns=result.dropped_columns,
     )
     valid_path = processed_parquet_path(data_dir, config.name)
     rejected_output = ParquetOutput(

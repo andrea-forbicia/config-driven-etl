@@ -41,7 +41,9 @@ Each stage logs one line to stderr, and every command ends with a
 text with local times instead, for reading in a terminal. With
 `BQ_AUDIT_TABLE` set, that summary is also appended as one row to that
 table in `BQ_DATASET`, for every dataset and every command, failed or
-not. Exit codes per error category are listed by
+not; an audit table created by an earlier version gains the fields
+added since.
+Exit codes per error category are listed by
 `python -m config_driven_etl --help`.
 
 ## Setup

@@ -294,14 +294,19 @@ def append_rows(
     """Append rows to the table with a load job and wait for it.
 
     A load job, not streaming, which the BigQuery sandbox does not
-    allow; the schema comes from the spec, never autodetection. Raises
-    LoadError if the job fails or appends a different number of rows.
+    allow; the schema comes from the spec, never autodetection. Fields
+    of the spec that the table lacks are added to it; any other
+    difference fails the job. Raises LoadError if the job fails or
+    appends a different number of rows.
     """
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
         schema=list(spec.schema),
         autodetect=False,
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        schema_update_options=[
+            bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
+        ],
     )
     with _bigquery_errors(table_id):
         job = client.load_table_from_json(

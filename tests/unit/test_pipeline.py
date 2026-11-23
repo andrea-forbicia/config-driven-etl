@@ -163,6 +163,9 @@ class TransformDatasetTest(PipelineTestCase):
                     ),
                 )
                 self.assertEqual(result.rejections, outcome.rejections)
+                self.assertEqual(
+                    result.dropped_columns, outcome.dropped_columns
+                )
                 path = processed_parquet_path(self.data_dir, config.name)
                 self.assertEqual(
                     pl.read_parquet(path).height, outcome.rows_valid

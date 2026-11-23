@@ -184,6 +184,9 @@ class RunCommandTest(unittest.TestCase):
             (outcome.rows_in, outcome.rows_valid, outcome.rows_rejected),
         )
         self.assertEqual(transform["rejections"], outcome.rejections)
+        self.assertEqual(
+            transform["dropped_columns"], list(outcome.dropped_columns)
+        )
         loaded = self.bigquery.data[f"project.dataset.{config.target.table}"]
         self.assertTrue(loaded.equals(frame))
 
@@ -403,6 +406,7 @@ class RunCommandTest(unittest.TestCase):
             f"rejected {outcome.rows_rejected}  (",
             transform,
         )
+        self.assertIn("  dropped 'Internal Note'  ", transform)
         self.assertIn(
             f"rejected loaded {outcome.rows_rejected} into "
             "library_loans_rejected",
