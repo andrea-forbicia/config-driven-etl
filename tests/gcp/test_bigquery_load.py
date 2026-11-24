@@ -27,10 +27,12 @@ from config_driven_etl.load import (
     bigquery_table_id,
     ensure_table,
     load_parquet,
+    load_parquet_partitions,
     parquet_row_count,
     processed_parquet_path,
     rejected_parquet_path,
     verify_parquet,
+    verify_partition_rows,
     verify_table_rows,
     write_parquet,
 )
@@ -163,6 +165,39 @@ class BigQueryLoadTest(unittest.TestCase):
                         loaded.sort(key).equals(expected.sort(key)),
                         f"{loaded}\n!=\n{expected}",
                     )
+
+    def test_partition_loads_replace_only_the_days_in_the_file(self) -> None:
+        name = "sensor_readings"
+        spec = table_spec(fixture_config(name))
+        path, table_id = self.write_fixture(name)
+        first = pl.read_parquet(path)
+        day = pl.col("measured_at").dt.date()
+        latest = first.select(day.max()).item()
+        # The latest day again, with one value changed, and nothing else.
+        later = first.filter(day == latest).with_columns(
+            pl.col("humidity_pct") + 1
+        )
+        later_path = self.data_dir / "later.parquet"
+        write_parquet(later, later_path)
+        expected = pl.concat([first.filter(day != latest), later])
+        ensure_table(self.client, table_id, spec)
+
+        partitions = load_parquet_partitions(self.client, path, table_id, spec)
+        verify_partition_rows(self.client, table_id, partitions)
+        self.assertEqual(len(partitions), 2)
+
+        for _ in range(2):
+            partitions = load_parquet_partitions(
+                self.client, later_path, table_id, spec
+            )
+            verify_partition_rows(self.client, table_id, partitions)
+
+            self.assertEqual(list(partitions), [f"{latest:%Y%m%d}"])
+            loaded = self.read_table(table_id).sort("reading_id")
+            expected = expected.sort("reading_id")
+            self.assertTrue(
+                loaded.equals(expected), f"{loaded}\n!=\n{expected}"
+            )
 
     def test_rejected_rows_load_and_reload_to_the_same_state(self) -> None:
         for name in OUTCOMES:

@@ -392,7 +392,7 @@ is, so re-runs stay idempotent. `partition` is a new optional value of
       mode (still a full truncate, so it holds only the last run's
       rejections) and the known limit: a row whose date changes
       between runs stays in its old partition too `[docs]`
-- [ ] System tests with the BigQuery client faked: a second run with
+- [x] System tests with the BigQuery client faked: a second run with
       fewer days keeps the older partitions, a re-run of the same file
       leaves the same state; `gcp` test on a temporary partitioned
       table; use `partition` in `usgs_earthquakes.yaml` `[test]`
