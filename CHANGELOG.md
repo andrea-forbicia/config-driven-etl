@@ -23,7 +23,10 @@ and this project adheres to
   `partitions` in the load stage line (`N partitions first..last` in the
   pretty format) and in each stage of the run summary and audit row.
   Additive schema changes are applied; a breaking one exits with code 9
-  even with `--allow-schema-change`.
+  even with `--allow-schema-change`. The `target.rejected_table` is still
+  replaced whole, so it holds only the last run's rejections. Known
+  limit: a row whose date changes between two runs stays in its old day
+  too, since that day is kept.
 
 ## [1.6.0] - 2026-11-23
 

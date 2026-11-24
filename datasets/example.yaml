@@ -173,13 +173,19 @@ target:
   # 1960-01-01 or after 2159-12-31 has no day partition in BigQuery, so it
   # fails the load before any job. A breaking schema change is refused
   # even with --allow-schema-change, since the kept days would no longer
-  # match it. Default: truncate.
+  # match it. Known limit: a row whose day changes between two runs (a
+  # corrected date) stays in its old day too, because that day is not in
+  # the new file and is kept; deduplicate_on only compares rows of the
+  # same file. Run once with truncate to rebuild the table from a complete
+  # file. Default: truncate.
   write_mode: truncate
 
   # Table for the rejected rows, in the same BQ_DATASET. Must differ from
   # table. After the valid rows, the load stage loads
   # data/processed/<name>/<name>.rejected.parquet into it, replacing its
-  # data on every run (empty when no row is rejected). Columns:
+  # data on every run (empty when no row is rejected), with either
+  # write_mode: it holds only the last run's rejections, while the audit
+  # row keeps every run's rejection counts by reason. Columns:
   # row_number INT64 (the record's position: a quoted value spanning lines
   # counts once), reasons ARRAY<STRING>, raw STRUCT with every column
   # above as a STRING. Never partitioned or clustered: an existing table
