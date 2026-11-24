@@ -161,12 +161,16 @@ target:
 
   # How a run replaces the table data. Either way, re-running the same
   # input leaves the same table state. truncate: every run replaces the
-  # whole table. partition: a run will replace only the partitions present
-  # in the file and keep the others; it requires partition_by on a column
-  # with nullable: false, so every row has a partition. Not supported by
-  # this version yet: load fails before touching BigQuery, and run before
-  # the download.
-  # Default: truncate.
+  # whole table. partition: a run replaces only the days present in the
+  # file, one load job per day, and keeps the others; it requires
+  # partition_by on a column with nullable: false, so every row has a
+  # day. Each day counts toward BigQuery's 1,500 table modifications per
+  # table per day. If a job fails, the run fails listing the days already
+  # replaced; rerunning the same file replaces them all. A day before
+  # 1960-01-01 or after 2159-12-31 has no day partition in BigQuery, so it
+  # fails the load before any job. A breaking schema change is refused
+  # even with --allow-schema-change, since the kept days would no longer
+  # match it. Default: truncate.
   write_mode: truncate
 
   # Table for the rejected rows, in the same BQ_DATASET. Must differ from
@@ -193,7 +197,9 @@ target:
   # this setting, in either table, fails the run with exit code 9 before
   # any load, listing both tables' changes and leaving their data
   # untouched; rerun with --allow-schema-change to replace the schemas
-  # anyway, for that run only. Accepted changes are listed as
+  # anyway, for that run only (except a breaking change to table with
+  # write_mode partition, which is always refused). Accepted changes are
+  # listed as
   # schema_changes and rejected_schema_changes in the load stage line.
   # Default: additive.
   schema_change: additive

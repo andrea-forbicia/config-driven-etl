@@ -33,6 +33,7 @@ from config_driven_etl.load import (
     bigquery_table_id,
     ensure_table,
     load_parquet,
+    load_parquet_partitions,
     parquet_row_count,
     processed_parquet_path,
     rejected_parquet_path,
@@ -330,15 +331,6 @@ def _min_rows_failure(config: DatasetConfig, stage: StageResult) -> str | None:
     return f"{stage.rows_out} valid rows, below rules.min_rows {minimum}"
 
 
-def require_supported_write_mode(config: DatasetConfig) -> None:
-    """Raise LoadError if this version cannot load target.write_mode."""
-    # A truncate would erase the partitions the config asks to keep.
-    if config.target.write_mode == "partition":
-        raise LoadError(
-            "target.write_mode: partition is not supported by this version yet"
-        )
-
-
 def load_dataset(
     config: DatasetConfig,
     data_dir: Path,
@@ -355,9 +347,10 @@ def load_dataset(
     so those failures leave both tables unchanged; a missing table is
     created, empty, before the comparison. A schema change above
     target.schema_change, in either table, raises SchemaDriftError,
-    unless allow_schema_change accepts any change for this load.
+    unless allow_schema_change accepts any change for this load. With
+    target.write_mode partition, only the days in the file are replaced,
+    and a breaking change to the target table is always refused.
     """
-    require_supported_write_mode(config)
     path = processed_parquet_path(data_dir, config.name)
     if not path.is_file():
         raise LoadError(
@@ -371,6 +364,7 @@ def load_dataset(
             client.project, dataset, config.target.table
         ),
         spec=table_spec(config),
+        by_partition=config.target.write_mode == "partition",
     )
     rejected = None
     if config.target.rejected_table is not None:
@@ -420,6 +414,8 @@ class _TableLoad:
     rows: int
     table_id: str
     spec: TableSpec
+    # Replace only the day partitions in the file, not the whole table.
+    by_partition: bool = False
 
 
 def _schema_changes(
@@ -434,6 +430,8 @@ def _schema_changes(
     """
     changes: list[tuple[str, ...] | None] = []
     problems: list[str] = []
+    # The flag is suggested only if it would let the run load.
+    flag_helps = True
     for load, existing in tables:
         if existing is None:
             changes.append(None)
@@ -444,34 +442,51 @@ def _schema_changes(
             for item in diff.differences
         )
         changes.append(described)
+        # A partition load keeps the other days, which a breaking schema
+        # could no longer describe.
+        never = load.by_partition and diff.kind == "breaking"
         if (
-            allow_any
-            or diff.kind == "none"
+            diff.kind == "none"
             or (diff.kind == "additive" and allowed == "additive")
+            or (allow_any and not never)
         ):
             continue
         label = table_label(load.table_id)
         # No config value allows a breaking change, so the setting is
         # named only when changing it would help.
-        reason = (
-            "breaking schema change"
-            if diff.kind == "breaking"
-            else f"additive schema change, target.schema_change is {allowed}"
-        )
+        if never:
+            reason = (
+                "breaking schema change, which write_mode partition "
+                "cannot apply"
+            )
+        elif diff.kind == "breaking":
+            reason = "breaking schema change"
+        else:
+            reason = (
+                f"additive schema change, target.schema_change is {allowed}"
+            )
         problems.append(f"{label}: {reason}")
         problems += [f"{label}: {change}" for change in described]
-    if problems:
-        raise SchemaDriftError(
-            "\n".join(
-                [
-                    *problems,
-                    "rerun with --allow-schema-change to replace the schemas",
-                ]
+        if never:
+            problems.append(
+                f"{label}: delete the table, or load once with write_mode "
+                "truncate, to replace its schema and all its data"
             )
-        )
+            flag_helps = False
+    if problems:
+        if flag_helps:
+            problems.append(
+                "rerun with --allow-schema-change to replace the schemas"
+            )
+        raise SchemaDriftError("\n".join(problems))
     return changes
 
 
 def _load_and_verify(client: bigquery.Client, load: _TableLoad) -> None:
+    if load.by_partition:
+        # Each partition job checks its own row count; the table also
+        # holds the days the file does not touch.
+        load_parquet_partitions(client, load.path, load.table_id, load.spec)
+        return
     load_parquet(client, load.path, load.table_id, load.spec)
     verify_table_rows(client, load.table_id, load.rows)

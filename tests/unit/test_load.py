@@ -29,6 +29,7 @@ from config_driven_etl.load import (
     bigquery_table_id,
     ensure_table,
     load_parquet,
+    load_parquet_partitions,
     parquet_row_count,
     processed_parquet_path,
     rejected_parquet_path,
@@ -838,6 +839,209 @@ class LoadParquetTest(unittest.TestCase):
             load_parquet(self.client, self.path, TABLE_ID, target_spec())
 
         self.assertIn("cannot read file", str(context.exception))
+        self.client.load_table_from_file.assert_not_called()
+
+
+class LoadParquetPartitionsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "sample.parquet"
+        # Out of day order, so the test also shows the jobs are sorted.
+        self.frame = pl.DataFrame(
+            {
+                "s": ["b1", "a1", "b2", "c1"],
+                "d": [
+                    date(2026, 1, 2),
+                    date(2026, 1, 1),
+                    date(2026, 1, 2),
+                    date(2026, 1, 3),
+                ],
+            }
+        )
+        self.frame.write_parquet(self.path)
+        self.client = fake_client()
+        self.sent: list[tuple[str, pl.DataFrame]] = []
+        self.failing: set[str] = set()
+        self.client.load_table_from_file.side_effect = self.record
+
+    def record(
+        self, file: IO[bytes], table_id: str, job_config: object
+    ) -> bigquery.LoadJob:
+        frame = pl.read_parquet(file)
+        self.sent.append((table_id, frame))
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = frame.height
+        if table_id in self.failing:
+            job.result.side_effect = BadRequest("Error while reading data")
+        return job
+
+    def load(self, spec: TableSpec | None = None) -> tuple[str, ...]:
+        return load_parquet_partitions(
+            self.client, self.path, TABLE_ID, spec or target_spec()
+        )
+
+    def test_replaces_each_day_with_its_own_rows(self) -> None:
+        partitions = self.load()
+
+        self.assertEqual(partitions, ("20260101", "20260102", "20260103"))
+        self.assertEqual(
+            [
+                (table_id, frame["s"].to_list())
+                for table_id, frame in self.sent
+            ],
+            [
+                (f"{TABLE_ID}$20260101", ["a1"]),
+                (f"{TABLE_ID}$20260102", ["b1", "b2"]),
+                (f"{TABLE_ID}$20260103", ["c1"]),
+            ],
+        )
+        self.assertEqual(self.sent[0][1].schema, self.frame.schema)
+
+    def test_groups_a_datetime_column_by_day(self) -> None:
+        pl.DataFrame(
+            {
+                "s": ["a", "b", "c"],
+                "t": [
+                    datetime(2026, 1, 1, 0, 0, 0),
+                    datetime(2026, 1, 1, 23, 59, 59),
+                    datetime(2026, 1, 2, 0, 0, 0),
+                ],
+            }
+        ).write_parquet(self.path)
+        spec = TableSpec(
+            schema=(
+                bigquery.SchemaField("s", "STRING"),
+                bigquery.SchemaField("t", "DATETIME", mode="REQUIRED"),
+            ),
+            partition_by="t",
+            cluster_by=(),
+        )
+
+        partitions = self.load(spec)
+
+        self.assertEqual(partitions, ("20260101", "20260102"))
+        self.assertEqual([frame.height for _, frame in self.sent], [2, 1])
+
+    def test_jobs_truncate_the_partition_with_an_explicit_schema(
+        self,
+    ) -> None:
+        self.load()
+
+        for _, kwargs in self.client.load_table_from_file.call_args_list:
+            job_config = kwargs["job_config"]
+            self.assertEqual(
+                job_config.source_format, bigquery.SourceFormat.PARQUET
+            )
+            self.assertFalse(job_config.autodetect)
+            self.assertEqual(
+                job_config.write_disposition,
+                bigquery.WriteDisposition.WRITE_TRUNCATE,
+            )
+            self.assertEqual(job_config.schema, list(target_spec().schema))
+            # The schema check before the load already refused anything
+            # beyond an additive change.
+            self.assertEqual(
+                job_config.schema_update_options,
+                [
+                    bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION,
+                    bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION,
+                ],
+            )
+            partitioning = job_config.time_partitioning
+            assert partitioning is not None
+            self.assertEqual(partitioning.field, "d")
+            self.assertEqual(job_config.clustering_fields, ["s"])
+            options = job_config.parquet_options
+            assert options is not None
+            self.assertTrue(options.enable_list_inference)
+
+    def test_empty_file_replaces_no_partition(self) -> None:
+        self.frame.clear().write_parquet(self.path)
+
+        self.assertEqual(self.load(), ())
+        self.client.load_table_from_file.assert_not_called()
+
+    def test_failed_job_lists_the_replaced_and_remaining_days(self) -> None:
+        self.failing.add(f"{TABLE_ID}$20260102")
+
+        with self.assertRaises(LoadError) as context:
+            self.load()
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{TABLE_LABEL}$20260102: BigQuery error: 400 Error while "
+                "reading data",
+                f"{TABLE_LABEL}: partitions replaced: 20260101; not "
+                "replaced: 20260102, 20260103; rerun to replace them all",
+            ],
+        )
+        self.assertEqual(len(self.sent), 2)
+
+    def test_failed_first_job_replaced_nothing(self) -> None:
+        self.failing.add(f"{TABLE_ID}$20260101")
+
+        with self.assertRaises(LoadError) as context:
+            self.load()
+
+        self.assertIn(
+            "partitions replaced: none; not replaced: 20260101, 20260102, "
+            "20260103",
+            str(context.exception),
+        )
+
+    def test_row_count_mismatch_fails(self) -> None:
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = 0
+        self.client.load_table_from_file.side_effect = None
+        self.client.load_table_from_file.return_value = job
+
+        with self.assertRaises(LoadError) as context:
+            self.load()
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{TABLE_LABEL}$20260101: 0 rows loaded, expected 1",
+                f"{TABLE_LABEL}: partitions replaced: none; not replaced: "
+                "20260101, 20260102, 20260103; rerun to replace them all",
+            ],
+        )
+
+    def test_days_outside_the_partition_range_fail_before_any_job(
+        self,
+    ) -> None:
+        pl.DataFrame(
+            {
+                "s": ["old", "ok", "late"],
+                "d": [
+                    date(1959, 12, 31),
+                    date(1960, 1, 1),
+                    date(2160, 1, 1),
+                ],
+            }
+        ).write_parquet(self.path)
+
+        with self.assertRaises(LoadError) as context:
+            self.load()
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_LABEL}: d has days outside 1960-01-01..2159-12-31, "
+            "which BigQuery cannot partition by day: 19591231, 21600101",
+        )
+        self.client.load_table_from_file.assert_not_called()
+
+    def test_unreadable_file_sends_nothing(self) -> None:
+        self.path.write_bytes(b"not parquet")
+
+        with self.assertRaises(LoadError) as context:
+            self.load()
+
+        self.assertIn(
+            f"{self.path}: cannot read Parquet", str(context.exception)
+        )
         self.client.load_table_from_file.assert_not_called()
 
 

@@ -44,7 +44,6 @@ from config_driven_etl.pipeline import (
     audit_row,
     extract_dataset,
     load_dataset,
-    require_supported_write_mode,
     transform_dataset,
 )
 from config_driven_etl.settings import (
@@ -113,7 +112,8 @@ AllowSchemaChange = Annotated[
     typer.Option(
         "--allow-schema-change",
         help="Replace the target and rejected table schemas whatever the "
-        "change, for this run only.",
+        "change, for this run only. With write_mode partition, a breaking "
+        "change to the target table is still refused.",
     ),
 ]
 
@@ -198,7 +198,10 @@ def transform(dataset: DatasetFile) -> None:
 def load(
     dataset: DatasetFile, allow_schema_change: AllowSchemaChange = False
 ) -> None:
-    """Load the processed Parquet into BigQuery, replacing the table data."""
+    """Load the processed Parquet into BigQuery, replacing the table data.
+
+    With write_mode partition, only the days in the file are replaced.
+    """
     with _command("load", dataset) as job:
         _load(job, allow_schema_change)
 
@@ -209,10 +212,8 @@ def run(
 ) -> None:
     """Extract, transform and load one dataset."""
     with _command("run", dataset) as job:
-        # Checked first so a run that cannot load does not waste a
-        # download.
+        # Checked first so a missing setting does not waste a download.
         _bigquery_target(job.settings)
-        require_supported_write_mode(job.config)
         _extract(job)
         _transform(job)
         _load(job, allow_schema_change)

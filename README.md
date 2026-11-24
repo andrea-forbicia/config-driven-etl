@@ -30,13 +30,16 @@ flowchart LR
   reasons and raw values, to `<name>.rejected.parquet`. Both are snappy
   Parquet, verified before they replace the previous run's.
 - **load**: replaces the BigQuery table data with a load job
-  (`WRITE_TRUNCATE`). The schema, partitioning and clustering come from
-  the config; re-running gives the same table. With
+  (`WRITE_TRUNCATE`). With `target.write_mode: partition`, only the days
+  in the file are replaced, one load job per day (`table$YYYYMMDD`), and
+  the other days are kept. The schema, partitioning and clustering come
+  from the config; re-running gives the same table. With
   `target.rejected_table`, the rejected rows are loaded into their own
   table the same way. Before any load, the schema of each existing table
   is compared with the config: a change beyond `target.schema_change`
   exits with code 9 and loads nothing, unless the run is given
-  `--allow-schema-change`.
+  `--allow-schema-change` (in partition mode, a breaking change is
+  refused even then).
 
 Each stage logs one line to stderr, and every command ends with a
 `run_finished` line summarizing it; all lines of a command share a
@@ -105,8 +108,9 @@ ORDER BY day DESC;
 after creation and partitions older than 60 days are dropped. The next run
 recreates a deleted table; for the audit table, that means its history
 restarts. Rows dated more than 60 days ago in a
-partitioned table are dropped by BigQuery, and the load fails its row
-count check.
+partitioned table are dropped by BigQuery; with `write_mode: truncate`
+the load fails its row count check, while `write_mode: partition` does
+not detect it yet.
 
 ## Adding a dataset
 

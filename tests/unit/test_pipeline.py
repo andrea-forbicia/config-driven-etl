@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import UTC
 from pathlib import Path
+from typing import IO
 from unittest import mock
 
 import polars as pl
@@ -471,6 +472,159 @@ class QualityGateTest(PipelineTestCase):
         self.assertFalse(self.valid_path.exists())
 
 
+def counting_job(
+    file: IO[bytes], table_id: str, job_config: object
+) -> bigquery.LoadJob:
+    """A load job that reports the rows of the file it was sent."""
+    job = mock.create_autospec(bigquery.LoadJob, instance=True)
+    job.output_rows = pl.read_parquet(file).height
+    return job
+
+
+class PartitionLoadTest(PipelineTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.config = with_target(
+            fixture_config("library_loans"),
+            partition_by="loan_date",
+            write_mode="partition",
+        )
+        extract_dataset(self.config, self.data_dir, self.session)
+        transform_dataset(self.config, self.data_dir)
+        valid = pl.read_parquet(
+            processed_parquet_path(self.data_dir, self.config.name)
+        )
+        self.days = sorted(
+            f"{day:%Y%m%d}" for day in valid["loan_date"].unique()
+        )
+
+    def client(
+        self,
+        existing: list[bigquery.SchemaField] | None = None,
+        rejected_existing: list[bigquery.SchemaField] | None = None,
+    ) -> mock.MagicMock:
+        """Each table missing, or present with the given schema."""
+        spec = table_spec(self.config)
+        table: object = NotFound("no table yet")
+        if existing is not None:
+            table = bigquery.Table(VALID_TABLE, schema=existing)
+            table.time_partitioning = bigquery.TimePartitioning(
+                field=spec.partition_by
+            )
+            table.clustering_fields = list(spec.cluster_by) or None
+        rejected = mock.create_autospec(bigquery.Table, instance=True)
+        rejected.num_rows = LOANS.rows_rejected
+        client = mock.create_autospec(bigquery.Client, instance=True)
+        client.project = "project"
+        # Only the rejected table is counted after its load: each
+        # partition job reports its own rows.
+        client.get_table.side_effect = [
+            table,
+            NotFound("no rejected table")
+            if rejected_existing is None
+            else bigquery.Table(REJECTED_TABLE, schema=rejected_existing),
+            rejected,
+        ]
+        client.load_table_from_file.side_effect = counting_job
+        return client
+
+    def loaded_tables(self, client: mock.MagicMock) -> list[str]:
+        return [
+            args[1] for args, _ in client.load_table_from_file.call_args_list
+        ]
+
+    def test_replaces_each_day_then_the_rejected_table(self) -> None:
+        client = self.client()
+
+        result = load_dataset(self.config, self.data_dir, client, "dataset")
+
+        self.assertGreater(len(self.days), 1)
+        self.assertEqual(
+            self.loaded_tables(client),
+            [f"{VALID_TABLE}${day}" for day in self.days] + [REJECTED_TABLE],
+        )
+        self.assertEqual(
+            (result.rows_in, result.rows_out, result.rejected_rows_loaded),
+            (LOANS.rows_valid, LOANS.rows_valid, LOANS.rows_rejected),
+        )
+
+    def test_additive_change_loads(self) -> None:
+        *older, last = table_spec(self.config).schema
+        client = self.client(older)
+
+        result = load_dataset(self.config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            result.schema_changes, (f"{last.name}: added as NULLABLE",)
+        )
+        self.assertEqual(len(self.loaded_tables(client)), len(self.days) + 1)
+
+    def test_breaking_change_fails_even_when_allowed(self) -> None:
+        schema = [
+            *table_spec(self.config).schema,
+            bigquery.SchemaField("old", "STRING"),
+        ]
+        client = self.client(schema)
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(
+                self.config,
+                self.data_dir,
+                client,
+                "dataset",
+                allow_schema_change=True,
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{VALID_LABEL}: breaking schema change, which write_mode "
+                "partition cannot apply",
+                f"{VALID_LABEL}: old: removed",
+                f"{VALID_LABEL}: delete the table, or load once with "
+                "write_mode truncate, to replace its schema and all its data",
+            ],
+        )
+        client.load_table_from_file.assert_not_called()
+
+    def breaking_schemas(
+        self,
+    ) -> tuple[list[bigquery.SchemaField], list[bigquery.SchemaField]]:
+        old = bigquery.SchemaField("old", "STRING")
+        return (
+            [*table_spec(self.config).schema, old],
+            [*rejected_table_spec(self.config).schema, old],
+        )
+
+    def test_both_tables_breaking_never_suggest_the_flag(self) -> None:
+        # The flag would fix the rejected table only, and the run would
+        # still fail on the target.
+        client = self.client(*self.breaking_schemas())
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(self.config, self.data_dir, client, "dataset")
+
+        lines = str(context.exception).splitlines()
+        self.assertIn(f"{REJECTED_LABEL}: breaking schema change", lines)
+        self.assertNotIn("--allow-schema-change", str(context.exception))
+        client.load_table_from_file.assert_not_called()
+
+    def test_flag_still_applies_to_the_rejected_table(self) -> None:
+        client = self.client(*self.breaking_schemas())
+
+        with self.assertRaises(SchemaDriftError) as context:
+            load_dataset(
+                self.config,
+                self.data_dir,
+                client,
+                "dataset",
+                allow_schema_change=True,
+            )
+
+        self.assertNotIn(REJECTED_LABEL, str(context.exception))
+        client.load_table_from_file.assert_not_called()
+
+
 class RunRecorderTest(unittest.TestCase):
     def test_summary_keeps_the_stages_in_order(self) -> None:
         recorder = RunRecorder("run", "1.2.3")
@@ -856,24 +1010,6 @@ class LoadDatasetTest(PipelineTestCase):
             "gate removes it)",
         )
         client.get_table.assert_not_called()
-        client.load_table_from_file.assert_not_called()
-
-    def test_partition_write_mode_fails_before_any_load(self) -> None:
-        # Until partition loads exist, a truncate would erase the history
-        # the config asks to keep.
-        config = with_target(self.config, write_mode="partition")
-        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
-
-        with self.assertRaises(LoadError) as context:
-            load_dataset(config, self.data_dir, client, "dataset")
-
-        self.assertEqual(
-            str(context.exception),
-            "target.write_mode: partition is not supported by this "
-            "version yet",
-        )
-        client.get_table.assert_not_called()
-        client.create_table.assert_not_called()
         client.load_table_from_file.assert_not_called()
 
     def test_missing_rejected_file_fails_before_any_load(self) -> None:
