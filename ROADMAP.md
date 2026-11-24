@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 14 — Schema drift**
+**Current phase: 15 — Partition loads**
 
 How to use this plan:
 
@@ -365,6 +365,44 @@ Exit: a fixture run against a table with a breaking difference exits
 with code 9 and leaves the BigQuery tables untouched; an additive change
 loads under the default; dropped source columns appear in the logs and
 the audit row; the GitHub Release for the new version exists.
+
+## Phase 15 — Partition loads
+
+Goal: a source that publishes only recent data can be loaded without
+erasing the history already in BigQuery. A load replaces only the
+partitions present in the file and leaves every other partition as it
+is, so re-runs stay idempotent. `partition` is a new optional value of
+`target.write_mode`, so the phase is a MINOR change.
+
+- [ ] `target.write_mode: partition` in the config: requires
+      `partition_by` on a column with `nullable: false`, so every row
+      has a partition. `truncate` stays the default. Validated,
+      documented in `datasets/example.yaml` `[feat]`
+- [ ] Load only the partitions in the file: each day present in the
+      valid Parquet replaces the same day in the table, the other days
+      are untouched. Decide first between one load job per partition
+      (`table$YYYYMMDD`, simple but bounded by the load job quota) and
+      a staging table copied partition by partition. Decide also what
+      happens when the load fails halfway (some partitions replaced,
+      fixed by a re-run) `[feat]`
+- [ ] Verify the row count of each replaced partition instead of the
+      whole table, and list the replaced partitions in the load stage
+      line and in the audit row `[feat]`
+- [ ] Decide and document what `rejected_table` does in `partition`
+      mode (still a full truncate, so it holds only the last run's
+      rejections) and the known limit: a row whose date changes
+      between runs stays in its old partition too `[docs]`
+- [ ] System tests with the BigQuery client faked: a second run with
+      fewer days keeps the older partitions, a re-run of the same file
+      leaves the same state; `gcp` test on a temporary partitioned
+      table; use `partition` in `usgs_earthquakes.yaml` `[test]`
+- [ ] Release `v1.7.0`: version bump, `CHANGELOG.md` section,
+      annotated tag `[chore]`
+
+Exit: two runs of a fixture with overlapping days leave the older
+partitions intact and the overlapping ones replaced; running the same
+file twice leaves the same table state; the GitHub Release for
+`v1.7.0` exists.
 
 ## Definition of done
 
