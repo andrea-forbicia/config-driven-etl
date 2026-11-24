@@ -330,6 +330,15 @@ def _min_rows_failure(config: DatasetConfig, stage: StageResult) -> str | None:
     return f"{stage.rows_out} valid rows, below rules.min_rows {minimum}"
 
 
+def require_supported_write_mode(config: DatasetConfig) -> None:
+    """Raise LoadError if this version cannot load target.write_mode."""
+    # A truncate would erase the partitions the config asks to keep.
+    if config.target.write_mode == "partition":
+        raise LoadError(
+            "target.write_mode: partition is not supported by this version yet"
+        )
+
+
 def load_dataset(
     config: DatasetConfig,
     data_dir: Path,
@@ -348,6 +357,7 @@ def load_dataset(
     target.schema_change, in either table, raises SchemaDriftError,
     unless allow_schema_change accepts any change for this load.
     """
+    require_supported_write_mode(config)
     path = processed_parquet_path(data_dir, config.name)
     if not path.is_file():
         raise LoadError(

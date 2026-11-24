@@ -858,6 +858,24 @@ class LoadDatasetTest(PipelineTestCase):
         client.get_table.assert_not_called()
         client.load_table_from_file.assert_not_called()
 
+    def test_partition_write_mode_fails_before_any_load(self) -> None:
+        # Until partition loads exist, a truncate would erase the history
+        # the config asks to keep.
+        config = with_target(self.config, write_mode="partition")
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception),
+            "target.write_mode: partition is not supported by this "
+            "version yet",
+        )
+        client.get_table.assert_not_called()
+        client.create_table.assert_not_called()
+        client.load_table_from_file.assert_not_called()
+
     def test_missing_rejected_file_fails_before_any_load(self) -> None:
         path = rejected_parquet_path(self.data_dir, self.config.name)
         path.unlink()

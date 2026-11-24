@@ -388,8 +388,9 @@ class Target(_StrictModel):
     partition_by: Identifier | None = None
     # BigQuery accepts at most four clustering columns.
     cluster_by: tuple[Identifier, ...] = Field(default=(), max_length=4)
-    # Only truncate keeps re-runs idempotent.
-    write_mode: Literal["truncate"] = "truncate"
+    # Both keep re-runs idempotent: truncate replaces the whole table,
+    # partition only the partitions present in the file.
+    write_mode: Literal["truncate", "partition"] = "truncate"
     rejected_table: Identifier | None = None
     # The most a load may change the schema of an existing table; a
     # breaking change needs --allow-schema-change on the command line.
@@ -439,6 +440,7 @@ class DatasetConfig(_StrictModel):
                     f"target.partition_by: '{partition_by}' must be a date "
                     f"or datetime column, not {types[partition_by]}"
                 )
+        problems += self._partition_write_mode_problems()
 
         for path, names in [
             ("target.cluster_by", self.target.cluster_by),
@@ -470,6 +472,30 @@ class DatasetConfig(_StrictModel):
 
         _raise_if_any(problems)
         return self
+
+    def _partition_write_mode_problems(self) -> list[str]:
+        if self.target.write_mode != "partition":
+            return []
+        partition_by = self.target.partition_by
+        if partition_by is None:
+            return [
+                "target.write_mode: partition requires target.partition_by"
+            ]
+        column = next(
+            (c for c in self.columns if c.name == partition_by), None
+        )
+        # A null would land in BigQuery's __NULL__ partition, outside the
+        # days a partition load replaces.
+        if (
+            column is not None
+            and column.type in TEMPORAL_TYPES
+            and column.nullable
+        ):
+            return [
+                f"target.write_mode: partition requires '{partition_by}' "
+                "to be nullable: false"
+            ]
+        return []
 
 
 def _duplicates(values: Iterable[str]) -> list[str]:

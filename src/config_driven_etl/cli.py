@@ -44,6 +44,7 @@ from config_driven_etl.pipeline import (
     audit_row,
     extract_dataset,
     load_dataset,
+    require_supported_write_mode,
     transform_dataset,
 )
 from config_driven_etl.settings import (
@@ -208,8 +209,10 @@ def run(
 ) -> None:
     """Extract, transform and load one dataset."""
     with _command("run", dataset) as job:
-        # Checked first so a missing setting does not waste a download.
+        # Checked first so a run that cannot load does not waste a
+        # download.
         _bigquery_target(job.settings)
+        require_supported_write_mode(job.config)
         _extract(job)
         _transform(job)
         _load(job, allow_schema_change)

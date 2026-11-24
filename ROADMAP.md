@@ -374,7 +374,7 @@ partitions present in the file and leaves every other partition as it
 is, so re-runs stay idempotent. `partition` is a new optional value of
 `target.write_mode`, so the phase is a MINOR change.
 
-- [ ] `target.write_mode: partition` in the config: requires
+- [x] `target.write_mode: partition` in the config: requires
       `partition_by` on a column with `nullable: false`, so every row
       has a partition. `truncate` stays the default. Validated,
       documented in `datasets/example.yaml` `[feat]`

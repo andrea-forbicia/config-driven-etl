@@ -991,6 +991,52 @@ class DatasetConfigReferencesTest(unittest.TestCase):
 
         self.assertEqual(config.target.partition_by, "observed_at")
 
+    def test_partition_write_mode(self) -> None:
+        data = full_config()
+        data["target"]["write_mode"] = "partition"
+
+        config = DatasetConfig.model_validate(data)
+
+        self.assertEqual(config.target.write_mode, "partition")
+
+    def test_partition_write_mode_needs_partition_by(self) -> None:
+        data = minimal_config()
+        data["target"]["write_mode"] = "partition"
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.write_mode: partition requires target.partition_by",
+        )
+
+    def test_partition_write_mode_needs_a_non_nullable_column(self) -> None:
+        data = full_config()
+        data["columns"][0]["nullable"] = True
+        data["target"]["write_mode"] = "partition"
+
+        self.assertEqual(
+            self.config_error(data),
+            "target.write_mode: partition requires 'observation_date' "
+            "to be nullable: false",
+        )
+
+    def test_partition_write_mode_with_an_invalid_column(self) -> None:
+        # The partition_by error alone: a missing or non-temporal column
+        # cannot hold partitions anyway.
+        for partition_by, message in [
+            ("missing", "'missing' is not a column"),
+            ("id", "'id' must be a date or datetime column, not int"),
+        ]:
+            with self.subTest(partition_by=partition_by):
+                data = minimal_config()
+                data["target"].update(
+                    write_mode="partition", partition_by=partition_by
+                )
+
+                self.assertEqual(
+                    self.config_error(data),
+                    f"target.partition_by: {message}",
+                )
+
     def test_unknown_or_repeated_list_references(self) -> None:
         cases = [
             ("target", "cluster_by", ["missing"], "'missing' is not a column"),
