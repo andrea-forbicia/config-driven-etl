@@ -396,8 +396,9 @@ is, so re-runs stay idempotent. `partition` is a new optional value of
       fewer days keeps the older partitions, a re-run of the same file
       leaves the same state; `gcp` test on a temporary partitioned
       table; use `partition` in `usgs_earthquakes.yaml` `[test]`
-- [ ] Release `v1.7.0`: version bump, `CHANGELOG.md` section,
-      annotated tag `[chore]`
+- [x] Release `v1.7.0`: version bump, `CHANGELOG.md` section,
+      annotated tag. MINOR: `partition` is a new optional value, and
+      every v1.6.0 config stays valid `[chore]`
 
 Exit: two runs of a fixture with overlapping days leave the older
 partitions intact and the overlapping ones replaced; running the same
