@@ -114,4 +114,7 @@ rules:
 target:
   table: usgs_earthquakes
   partition_by: time
+  # The feed keeps 30 days: each run replaces those days and keeps the
+  # older ones loaded by earlier runs.
+  write_mode: partition
   cluster_by: [net, type]

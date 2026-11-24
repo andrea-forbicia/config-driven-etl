@@ -48,11 +48,27 @@ class FakeBigQuery:
         pass
 
     def get_table(self, table_id: str) -> bigquery.Table:
+        base, _, day = table_id.partition("$")
+        if day:
+            return self._partition(base, day)
         if table_id not in self.tables:
             raise NotFound(f"Table {table_id} not found")
         table = self.tables[table_id]
         table._properties["numRows"] = str(self.data[table_id].height)
         return table
+
+    def _partition(self, table_id: str, day: str) -> bigquery.Table:
+        """The table$YYYYMMDD view: how many rows that day holds."""
+        table = self.get_table(table_id)
+        rows = self.data[table_id].filter(self._in_day(table_id, day)).height
+        table._properties["numRows"] = str(rows)
+        return table
+
+    def _in_day(self, table_id: str, day: str) -> pl.Expr:
+        partitioning = self.tables[table_id].time_partitioning
+        assert partitioning is not None and partitioning.field is not None
+        days = pl.col(partitioning.field).cast(pl.Date)
+        return days.dt.strftime("%Y%m%d") == day
 
     def create_table(
         self, table: bigquery.Table, exists_ok: bool = False
@@ -69,11 +85,25 @@ class FakeBigQuery:
         job_config: bigquery.LoadJobConfig,
     ) -> mock.MagicMock:
         self.job_configs.append(job_config)
-        # WRITE_TRUNCATE: the file and the job's schema replace whatever
-        # the table held.
-        self.data[table_id] = pl.read_parquet(io.BytesIO(file.read()))
-        self.tables[table_id].schema = job_config.schema
-        return mock.create_autospec(bigquery.LoadJob, instance=True)
+        loaded = pl.read_parquet(io.BytesIO(file.read()))
+        base, _, day = table_id.partition("$")
+        if day:
+            # A partition decorator replaces that day only.
+            held = self.data[base]
+            if held.is_empty():
+                self.data[base] = loaded
+            else:
+                others = held.filter(~self._in_day(base, day))
+                self.data[base] = pl.concat([others, loaded])
+            self.tables[base].schema = job_config.schema
+        else:
+            # WRITE_TRUNCATE: the file and the job's schema replace
+            # whatever the table held.
+            self.data[table_id] = loaded
+            self.tables[table_id].schema = job_config.schema
+        job = mock.create_autospec(bigquery.LoadJob, instance=True)
+        job.output_rows = loaded.height
+        return job
 
     def load_table_from_json(
         self,
@@ -154,6 +184,31 @@ class RunCommandTest(unittest.TestCase):
             encoding="utf-8",
         )
         return path
+
+    def partition_dataset(self, csv: Path | None = None) -> Path:
+        """sensor_readings with write_mode partition, and maybe a new CSV."""
+        config = fixture_config("sensor_readings")
+        target = config.target.model_copy(update={"write_mode": "partition"})
+        config = config.model_copy(update={"target": target})
+        if csv is not None:
+            source = config.source.model_copy(update={"path": csv})
+            config = config.model_copy(update={"source": source})
+        return self.write_config(config, "sensor_readings_partition.yaml")
+
+    def later_feed(self) -> Path:
+        """Only the second day, one reading changed and one new."""
+        csv = self.directory / "later.csv"
+        csv.write_text(
+            "Reading ID,Sensor,Timestamp,Temperature (C),Humidity,Online\n"
+            "r010,s5,2026-01-02T02:00:00,-20.0,0,false\n"
+            "r015,s6,2026-01-02T06:00:00,8.0,70,true\n",
+            encoding="utf-8",
+        )
+        return csv
+
+    def loaded_readings(self) -> pl.DataFrame:
+        frame = self.bigquery.data["project.dataset.sensor_readings"]
+        return frame.sort("reading_id")
 
     def table_schema(self, table: str) -> list[bigquery.SchemaField]:
         return list(self.bigquery.tables[f"project.dataset.{table}"].schema)
@@ -307,6 +362,57 @@ class RunCommandTest(unittest.TestCase):
         for table_id, frame in self.bigquery.data.items():
             with self.subTest(table=table_id):
                 self.assertTrue(frame.equals(first_loaded[table_id]))
+
+    def test_partition_run_keeps_the_days_not_in_the_file(self) -> None:
+        first = CliRunner().invoke(app, ["run", str(self.partition_dataset())])
+        self.assertEqual(first.exit_code, 0, first.output)
+        before = self.loaded_readings()
+        self.assertEqual(before.height, OUTCOMES["sensor_readings"].rows_valid)
+
+        later = self.partition_dataset(self.later_feed())
+        second = CliRunner().invoke(app, ["run", str(later)])
+
+        self.assertEqual(second.exit_code, 0, second.output)
+        loaded = self.loaded_readings()
+        january_first = date(2026, 1, 1)
+        # The older day is exactly as the first run left it.
+        self.assertTrue(
+            loaded.filter(
+                pl.col("measured_at").dt.date() == january_first
+            ).equals(
+                before.filter(pl.col("measured_at").dt.date() == january_first)
+            )
+        )
+        # The overlapping day holds only what the second file has.
+        newer = loaded.filter(pl.col("measured_at").dt.date() > january_first)
+        self.assertEqual(newer["reading_id"].to_list(), ["r010", "r015"])
+        self.assertEqual(newer["temperature_c"].to_list(), [-20.0, 8.0])
+        self.assertEqual(loaded.height, 5)
+        self.assertEqual(
+            [
+                self.events(first)[2]["partitions"],
+                self.events(second)[2]["partitions"],
+            ],
+            [["20260101", "20260102"], ["20260102"]],
+        )
+
+    def test_partition_rerun_of_the_same_file_leaves_the_same_state(
+        self,
+    ) -> None:
+        later = self.partition_dataset(self.later_feed())
+        first_run = CliRunner().invoke(
+            app, ["run", str(self.partition_dataset())]
+        )
+        self.assertEqual(first_run.exit_code, 0, first_run.output)
+
+        states = []
+        for _ in range(2):
+            result = CliRunner().invoke(app, ["run", str(later)])
+            self.assertEqual(result.exit_code, 0, result.output)
+            states.append(self.loaded_readings())
+
+        self.assertTrue(states[0].equals(states[1]))
+        self.assertEqual(states[0].height, 5)
 
     def test_logged_rejected_file_is_the_rejected_parquet(self) -> None:
         result = self.run_dataset("library_loans")

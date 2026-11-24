@@ -28,6 +28,13 @@ and this project adheres to
   limit: a row whose date changes between two runs stays in its old day
   too, since that day is kept.
 
+### Changed
+
+- `datasets/usgs_earthquakes.yaml` uses `write_mode: partition`, so
+  each run replaces the 30 days of the feed and keeps the older days
+  loaded by earlier runs. An existing `usgs_earthquakes` table keeps
+  its rows until the next run replaces the days in the feed.
+
 ## [1.6.0] - 2026-11-23
 
 ### Added
