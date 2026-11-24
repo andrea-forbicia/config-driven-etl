@@ -35,7 +35,9 @@ flowchart LR
   the other days are kept. The schema, partitioning and clustering come
   from the config; re-running gives the same table. With
   `target.rejected_table`, the rejected rows are loaded into their own
-  table the same way. Before any load, the schema of each existing table
+  table, always replaced whole, so it holds only the last run's
+  rejections. In partition mode, a row whose date changes between runs
+  stays in its old day too. Before any load, the schema of each existing table
   is compared with the config: a change beyond `target.schema_change`
   exits with code 9 and loads nothing, unless the run is given
   `--allow-schema-change` (in partition mode, a breaking change is

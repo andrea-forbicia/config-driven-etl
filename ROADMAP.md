@@ -388,7 +388,7 @@ is, so re-runs stay idempotent. `partition` is a new optional value of
 - [x] Verify the row count of each replaced partition instead of the
       whole table, and list the replaced partitions in the load stage
       line and in the audit row `[feat]`
-- [ ] Decide and document what `rejected_table` does in `partition`
+- [x] Decide and document what `rejected_table` does in `partition`
       mode (still a full truncate, so it holds only the last run's
       rejections) and the known limit: a row whose date changes
       between runs stays in its old partition too `[docs]`
