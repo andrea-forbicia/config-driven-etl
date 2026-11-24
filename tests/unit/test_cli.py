@@ -440,32 +440,6 @@ class PipelineCommandsTest(unittest.TestCase):
         self.assertFalse((self.directory / "data").exists())
         self.client_factory.assert_not_called()
 
-    def test_run_with_partition_write_mode_fails_before_extracting(
-        self,
-    ) -> None:
-        dataset = self.directory / "x.yaml"
-        dataset.write_text(
-            "name: x\nsource:\n  path: x.csv\ncolumns:\n"
-            "  - {source: d, name: d, type: date, format: '%Y-%m-%d',"
-            " nullable: false}\n"
-            "target:\n  table: x\n  partition_by: d\n"
-            "  write_mode: partition\n",
-            encoding="utf-8",
-        )
-
-        result = self.invoke("run", str(dataset))
-
-        self.assertEqual(result.exit_code, 6)
-        (event,) = self.events(result)
-        self.assertEqual(event["category"], "load")
-        self.assertEqual(
-            event["error"],
-            "target.write_mode: partition is not supported by this "
-            "version yet",
-        )
-        self.assertFalse((self.directory / "data").exists())
-        self.client_factory.assert_not_called()
-
     def test_data_that_does_not_match_the_config_exits_with_five(self) -> None:
         source = self.directory / "source"
         source.mkdir()

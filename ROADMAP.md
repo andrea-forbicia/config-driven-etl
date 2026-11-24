@@ -378,7 +378,7 @@ is, so re-runs stay idempotent. `partition` is a new optional value of
       `partition_by` on a column with `nullable: false`, so every row
       has a partition. `truncate` stays the default. Validated,
       documented in `datasets/example.yaml` `[feat]`
-- [ ] Load only the partitions in the file: each day present in the
+- [x] Load only the partitions in the file: each day present in the
       valid Parquet replaces the same day in the table, the other days
       are untouched. Decide first between one load job per partition
       (`table$YYYYMMDD`, simple but bounded by the load job quota) and

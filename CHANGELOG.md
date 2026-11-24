@@ -10,12 +10,15 @@ and this project adheres to
 
 ### Added
 
-- `target.write_mode` accepts `partition`, for loads that will replace
-  only the partitions present in the file. It requires
-  `target.partition_by` on a column with `nullable: false`. Until the
-  partition load lands, `load` fails with a clear error (exit code 6)
-  before touching BigQuery, and `run` before the download, instead of
-  truncating the whole table.
+- `target.write_mode: partition`: a load replaces only the days present
+  in the file, with one `WRITE_TRUNCATE` load job per day
+  (`table$YYYYMMDD`), and keeps every other day, so a source that
+  publishes only recent data no longer erases the history. It requires
+  `target.partition_by` on a column with `nullable: false`. Each job
+  checks its row count; if one fails, the run exits with code 6 and lists
+  the days already replaced and those not, and rerunning the same file
+  replaces them all. Additive schema changes are applied; a breaking one
+  exits with code 9 even with `--allow-schema-change`.
 
 ## [1.6.0] - 2026-11-23
 

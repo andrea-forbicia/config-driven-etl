@@ -463,7 +463,8 @@ class DatasetConfig(_StrictModel):
             if types.get(name) is ColumnType.FLOAT
         ]
 
-        # Both loads truncate, so a shared table would keep only one.
+        # The rejected load truncates, so a shared table would lose the
+        # valid rows.
         if self.target.rejected_table == self.target.table:
             problems.append(
                 f"target.rejected_table: '{self.target.table}' is also "

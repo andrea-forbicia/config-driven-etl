@@ -1,10 +1,12 @@
 """Parquet output and BigQuery load jobs."""
 
+import io
 import os
 import tempfile
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -262,19 +264,6 @@ def load_parquet(
     BigQuery checks them against the table. Raises LoadError if the file
     cannot be read or the job fails.
     """
-    # Without list inference a Parquet list is read as a nested
-    # list.element record, which does not match a REPEATED field.
-    parquet_options = bigquery.ParquetOptions()
-    parquet_options.enable_list_inference = True
-    job_config = bigquery.LoadJobConfig(
-        source_format=bigquery.SourceFormat.PARQUET,
-        schema=list(spec.schema),
-        autodetect=False,
-        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-        time_partitioning=_time_partitioning(spec),
-        clustering_fields=list(spec.cluster_by) or None,
-        parquet_options=parquet_options,
-    )
     try:
         file = path.open("rb")
     except OSError as error:
@@ -282,9 +271,120 @@ def load_parquet(
         raise LoadError(f"{path}: cannot read file: {reason}") from error
     with file, _bigquery_errors(table_id):
         job = client.load_table_from_file(
-            file, table_id, job_config=job_config
+            file, table_id, job_config=_parquet_job_config(spec)
         )
         job.result()
+
+
+def load_parquet_partitions(
+    client: bigquery.Client,
+    path: Path,
+    table_id: str,
+    spec: TableSpec,
+) -> tuple[str, ...]:
+    """Replace only the day partitions present in a Parquet file.
+
+    The rows are split by the day of spec.partition_by and each day
+    replaces its partition (table$YYYYMMDD) with its own WRITE_TRUNCATE
+    load job, in day order; the other partitions are untouched, so
+    re-running the same file leaves the same table state. Additive
+    schema changes are applied, so a breaking one must be refused before.
+    Returns the replaced partition ids. Raises LoadError if the file
+    cannot be read, or naming the partitions already replaced and those
+    not, if a job fails or loads a different number of rows.
+    """
+    partition_by = spec.partition_by
+    if partition_by is None:
+        raise ValueError("a partition load needs spec.partition_by")
+    try:
+        frame = pl.read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as error:
+        reason = error_reason(error)
+        raise LoadError(f"{path}: cannot read Parquet: {reason}") from error
+    days = frame.get_column(partition_by).cast(pl.Date)
+    partitions = sorted(days.unique())
+    ids = tuple(f"{day:%Y%m%d}" for day in partitions)
+    # BigQuery keeps these days in __UNPARTITIONED__, which no day
+    # decorator can replace, so every rerun would fail the same way.
+    outside = [
+        partition
+        for day, partition in zip(partitions, ids, strict=True)
+        if not _FIRST_DAY <= day <= _LAST_DAY
+    ]
+    if outside:
+        raise LoadError(
+            f"{table_label(table_id)}: {partition_by} has days outside "
+            f"{_FIRST_DAY:%Y-%m-%d}..{_LAST_DAY:%Y-%m-%d}, which BigQuery "
+            f"cannot partition by day: {', '.join(outside)}"
+        )
+    # A partition load also replaces the schema the other days keep, so
+    # only the changes BigQuery can apply to a single partition are let
+    # through.
+    job_config = _parquet_job_config(
+        spec,
+        [
+            bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION,
+            bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION,
+        ],
+    )
+    for done, (day, partition) in enumerate(zip(partitions, ids, strict=True)):
+        try:
+            _load_frame(
+                client,
+                frame.filter(days == day),
+                f"{table_id}${partition}",
+                job_config,
+            )
+        except LoadError as error:
+            replaced = ", ".join(ids[:done]) or "none"
+            remaining = ", ".join(ids[done:])
+            raise LoadError(
+                f"{error}\n{table_label(table_id)}: partitions replaced: "
+                f"{replaced}; not replaced: {remaining}; rerun to replace "
+                "them all"
+            ) from error
+    return ids
+
+
+def _load_frame(
+    client: bigquery.Client,
+    frame: pl.DataFrame,
+    table_id: str,
+    job_config: bigquery.LoadJobConfig,
+) -> None:
+    buffer = io.BytesIO()
+    frame.write_parquet(buffer, compression="snappy")
+    buffer.seek(0)
+    with _bigquery_errors(table_id):
+        job = client.load_table_from_file(
+            buffer, table_id, job_config=job_config
+        )
+        job.result()
+    if job.output_rows != frame.height:
+        raise LoadError(
+            f"{table_label(table_id)}: {job.output_rows} rows loaded, "
+            f"expected {frame.height}"
+        )
+
+
+def _parquet_job_config(
+    spec: TableSpec,
+    schema_update_options: Sequence[str] = (),
+) -> bigquery.LoadJobConfig:
+    # Without list inference a Parquet list is read as a nested
+    # list.element record, which does not match a REPEATED field.
+    parquet_options = bigquery.ParquetOptions()
+    parquet_options.enable_list_inference = True
+    return bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.PARQUET,
+        schema=list(spec.schema),
+        autodetect=False,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+        time_partitioning=_time_partitioning(spec),
+        clustering_fields=list(spec.cluster_by) or None,
+        parquet_options=parquet_options,
+        schema_update_options=list(schema_update_options) or None,
+    )
 
 
 def append_rows(
@@ -396,3 +496,6 @@ def _bigquery_errors(table_id: str) -> Generator[None]:
 
 
 _MAX_ERROR_DETAILS = 3
+# The days a DAY column partitioning can hold.
+_FIRST_DAY = date(1960, 1, 1)
+_LAST_DAY = date(2159, 12, 31)
