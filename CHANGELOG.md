@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-24
+
 ### Added
 
 - `target.write_mode: partition`: a load replaces only the days present
@@ -430,7 +432,8 @@ and this project adheres to
   validating a date format or reading a Parquet file with an
   `IndexError`; the message names the error type instead.
 
-[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/andrea-forbicia/config-driven-etl/compare/v1.3.0...v1.4.0
