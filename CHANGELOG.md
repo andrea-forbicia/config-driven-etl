@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `target.write_mode` accepts `partition`, for loads that will replace
+  only the partitions present in the file. It requires
+  `target.partition_by` on a column with `nullable: false`. Until the
+  partition load lands, `load` fails with a clear error (exit code 6)
+  before touching BigQuery, and `run` before the download, instead of
+  truncating the whole table.
+
 ## [1.6.0] - 2026-11-23
 
 ### Added
