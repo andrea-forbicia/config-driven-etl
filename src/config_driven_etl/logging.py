@@ -79,6 +79,15 @@ def _fields(record: logging.LogRecord) -> Mapping[str, Any]:
     return getattr(record, _FIELDS, {})
 
 
+def _partitions(partitions: list[str]) -> str:
+    # A daily feed replaces a month of days; the JSON line lists them all.
+    if not partitions:
+        return "0 partitions"
+    if len(partitions) == 1:
+        return f"1 partition {partitions[0]}"
+    return f"{len(partitions)} partitions {partitions[0]}..{partitions[-1]}"
+
+
 def _render_stage(event: str, fields: dict[str, Any]) -> str:
     parts = [_column(fields.get("stage")) + str(fields.get("dataset"))]
     # Extract only counts what it read.
@@ -99,6 +108,8 @@ def _render_stage(event: str, fields: dict[str, Any]) -> str:
     if fields.get("schema_changes"):
         changes = "; ".join(fields["schema_changes"])
         parts.append(f"schema changed ({changes})")
+    if "partitions" in fields:
+        parts.append(_partitions(fields["partitions"]))
     if "rejected_rows_loaded" in fields:
         parts.append(
             f"rejected loaded {fields['rejected_rows_loaded']} "

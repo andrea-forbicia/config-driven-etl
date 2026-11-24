@@ -333,6 +333,8 @@ def _finish_stage(
         fields["dropped_columns"] = list(result.dropped_columns)
     if result.schema_changes is not None:
         fields["schema_changes"] = list(result.schema_changes)
+    if result.partitions is not None:
+        fields["partitions"] = list(result.partitions)
     log_event(event, **fields, **extra)
 
 

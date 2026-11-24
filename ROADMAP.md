@@ -385,7 +385,7 @@ is, so re-runs stay idempotent. `partition` is a new optional value of
       a staging table copied partition by partition. Decide also what
       happens when the load fails halfway (some partitions replaced,
       fixed by a re-run) `[feat]`
-- [ ] Verify the row count of each replaced partition instead of the
+- [x] Verify the row count of each replaced partition instead of the
       whole table, and list the replaced partitions in the load stage
       line and in the audit row `[feat]`
 - [ ] Decide and document what `rejected_table` does in `partition`

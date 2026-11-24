@@ -166,7 +166,10 @@ target:
   # partition_by on a column with nullable: false, so every row has a
   # day. Each day counts toward BigQuery's 1,500 table modifications per
   # table per day. If a job fails, the run fails listing the days already
-  # replaced; rerunning the same file replaces them all. A day before
+  # replaced; rerunning the same file replaces them all. After the jobs,
+  # each day's row count is read back from the table, so a day the
+  # sandbox drops as expired fails the run; the replaced days are listed
+  # as partitions in the load stage line and the audit row. A day before
   # 1960-01-01 or after 2159-12-31 has no day partition in BigQuery, so it
   # fails the load before any job. A breaking schema change is refused
   # even with --allow-schema-change, since the kept days would no longer

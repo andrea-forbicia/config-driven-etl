@@ -17,8 +17,13 @@ and this project adheres to
   `target.partition_by` on a column with `nullable: false`. Each job
   checks its row count; if one fails, the run exits with code 6 and lists
   the days already replaced and those not, and rerunning the same file
-  replaces them all. Additive schema changes are applied; a breaking one
-  exits with code 9 even with `--allow-schema-change`.
+  replaces them all. After the jobs, the row count of each replaced day
+  is read back from the table, so a day the sandbox drops as expired
+  fails the run instead of disappearing. The replaced days are listed as
+  `partitions` in the load stage line (`N partitions first..last` in the
+  pretty format) and in each stage of the run summary and audit row.
+  Additive schema changes are applied; a breaking one exits with code 9
+  even with `--allow-schema-change`.
 
 ## [1.6.0] - 2026-11-23
 
