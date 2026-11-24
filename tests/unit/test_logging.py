@@ -216,6 +216,44 @@ class PrettyFormatterTest(unittest.TestCase):
             "rejected schema changed (raw.x: added as NULLABLE)  9.1s",
         )
 
+    def test_load_names_its_partitions(self) -> None:
+        for partitions, text in [
+            (["20260101"], "1 partition 20260101"),
+            (
+                ["20260101", "20260102", "20260105"],
+                "3 partitions 20260101..20260105",
+            ),
+            ([], "0 partitions"),
+        ]:
+            with self.subTest(partitions=partitions):
+                line = pretty_line(
+                    "stage_completed",
+                    stage="load",
+                    dataset="d",
+                    rows_in=7,
+                    rows_out=7,
+                    rows_rejected=0,
+                    partitions=partitions,
+                    duration_s=9.1,
+                )
+
+                self.assertEqual(
+                    line, f"load       d  in 7  out 7  {text}  9.1s"
+                )
+
+    def test_truncate_load_does_not_mention_partitions(self) -> None:
+        line = pretty_line(
+            "stage_completed",
+            stage="load",
+            dataset="d",
+            rows_in=7,
+            rows_out=7,
+            rows_rejected=0,
+            duration_s=9.1,
+        )
+
+        self.assertNotIn("partition", line)
+
     def test_load_without_schema_changes_does_not_mention_them(self) -> None:
         line = pretty_line(
             "stage_completed",

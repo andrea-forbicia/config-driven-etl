@@ -160,15 +160,36 @@ def verify_table_rows(
         f"{table_label(table_id)}: {table.num_rows} rows loaded, "
         f"expected {expected_rows}"
     )
-    # BigQuery drops rows whose partition is already past its expiration
-    # without failing the job; the sandbox expires partitions after 60
-    # days, so old data silently disappears.
     if table.time_partitioning is not None:
-        message += (
-            "; rows in partitions older than the partition expiration are "
-            "dropped (60 days in the BigQuery sandbox)"
-        )
+        message += f"; {_EXPIRED_PARTITIONS}"
     raise LoadError(message)
+
+
+def verify_partition_rows(
+    client: bigquery.Client, table_id: str, partitions: Mapping[str, int]
+) -> None:
+    """Check that each partition (table$YYYYMMDD) holds its loaded rows.
+
+    partitions maps each id to its expected row count, as returned by
+    load_parquet_partitions. Raises LoadError listing every partition
+    that differs.
+    """
+    problems = []
+    for partition, expected in partitions.items():
+        partition_id = f"{table_id}${partition}"
+        with _bigquery_errors(partition_id):
+            rows = client.get_table(partition_id).num_rows
+        if rows != expected:
+            problems.append(
+                f"{table_label(partition_id)}: {rows} rows loaded, "
+                f"expected {expected}"
+            )
+    if problems:
+        raise LoadError(
+            "\n".join(
+                [*problems, f"{table_label(table_id)}: {_EXPIRED_PARTITIONS}"]
+            )
+        )
 
 
 def _read_footer(
@@ -281,7 +302,7 @@ def load_parquet_partitions(
     path: Path,
     table_id: str,
     spec: TableSpec,
-) -> tuple[str, ...]:
+) -> dict[str, int]:
     """Replace only the day partitions present in a Parquet file.
 
     The rows are split by the day of spec.partition_by and each day
@@ -289,7 +310,8 @@ def load_parquet_partitions(
     load job, in day order; the other partitions are untouched, so
     re-running the same file leaves the same table state. Additive
     schema changes are applied, so a breaking one must be refused before.
-    Returns the replaced partition ids. Raises LoadError if the file
+    Returns each replaced partition id with its row count, in day order;
+    check them with verify_partition_rows. Raises LoadError if the file
     cannot be read, or naming the partitions already replaced and those
     not, if a job fails or loads a different number of rows.
     """
@@ -327,14 +349,11 @@ def load_parquet_partitions(
             bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION,
         ],
     )
+    loaded: dict[str, int] = {}
     for done, (day, partition) in enumerate(zip(partitions, ids, strict=True)):
+        rows = frame.filter(days == day)
         try:
-            _load_frame(
-                client,
-                frame.filter(days == day),
-                f"{table_id}${partition}",
-                job_config,
-            )
+            _load_frame(client, rows, f"{table_id}${partition}", job_config)
         except LoadError as error:
             replaced = ", ".join(ids[:done]) or "none"
             remaining = ", ".join(ids[done:])
@@ -343,7 +362,8 @@ def load_parquet_partitions(
                 f"{replaced}; not replaced: {remaining}; rerun to replace "
                 "them all"
             ) from error
-    return ids
+        loaded[partition] = rows.height
+    return loaded
 
 
 def _load_frame(
@@ -496,6 +516,13 @@ def _bigquery_errors(table_id: str) -> Generator[None]:
 
 
 _MAX_ERROR_DETAILS = 3
+# BigQuery drops rows whose partition is already past its expiration
+# without failing the job; the sandbox expires partitions after 60 days,
+# so old data silently disappears.
+_EXPIRED_PARTITIONS = (
+    "rows in partitions older than the partition expiration are dropped "
+    "(60 days in the BigQuery sandbox)"
+)
 # The days a DAY column partitioning can hold.
 _FIRST_DAY = date(1960, 1, 1)
 _LAST_DAY = date(2159, 12, 31)

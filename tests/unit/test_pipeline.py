@@ -494,16 +494,23 @@ class PartitionLoadTest(PipelineTestCase):
         valid = pl.read_parquet(
             processed_parquet_path(self.data_dir, self.config.name)
         )
-        self.days = sorted(
-            f"{day:%Y%m%d}" for day in valid["loan_date"].unique()
-        )
+        counts = valid["loan_date"].value_counts()
+        self.day_rows = {
+            f"{day:%Y%m%d}": rows for day, rows in sorted(counts.iter_rows())
+        }
+        self.days = list(self.day_rows)
+        # What each partition holds after its load; a test can lower one.
+        self.held = dict(self.day_rows)
 
     def client(
         self,
         existing: list[bigquery.SchemaField] | None = None,
         rejected_existing: list[bigquery.SchemaField] | None = None,
     ) -> mock.MagicMock:
-        """Each table missing, or present with the given schema."""
+        """Each table missing, or present with the given schema.
+
+        A partition (table$YYYYMMDD) holds the rows in self.held.
+        """
         spec = table_spec(self.config)
         table: object = NotFound("no table yet")
         if existing is not None:
@@ -516,17 +523,34 @@ class PartitionLoadTest(PipelineTestCase):
         rejected.num_rows = LOANS.rows_rejected
         client = mock.create_autospec(bigquery.Client, instance=True)
         client.project = "project"
-        # Only the rejected table is counted after its load: each
-        # partition job reports its own rows.
-        client.get_table.side_effect = [
+        tables: list[object] = [
             table,
             NotFound("no rejected table")
             if rejected_existing is None
             else bigquery.Table(REJECTED_TABLE, schema=rejected_existing),
             rejected,
         ]
+
+        def get_table(table_id: str) -> object:
+            if "$" in table_id:
+                partition = mock.create_autospec(bigquery.Table, instance=True)
+                partition.num_rows = self.held[table_id.rpartition("$")[2]]
+                return partition
+            answer = tables.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        client.get_table.side_effect = get_table
         client.load_table_from_file.side_effect = counting_job
         return client
+
+    def read_partitions(self, client: mock.MagicMock) -> list[str]:
+        return [
+            args[0].rpartition("$")[2]
+            for args, _ in client.get_table.call_args_list
+            if "$" in args[0]
+        ]
 
     def loaded_tables(self, client: mock.MagicMock) -> list[str]:
         return [
@@ -547,6 +571,49 @@ class PartitionLoadTest(PipelineTestCase):
             (result.rows_in, result.rows_out, result.rejected_rows_loaded),
             (LOANS.rows_valid, LOANS.rows_valid, LOANS.rows_rejected),
         )
+        self.assertEqual(result.partitions, tuple(self.days))
+        self.assertEqual(self.read_partitions(client), self.days)
+
+    def test_empty_file_replaces_no_partition(self) -> None:
+        path = processed_parquet_path(self.data_dir, self.config.name)
+        pl.read_parquet(path).clear().write_parquet(path)
+        client = self.client()
+
+        result = load_dataset(self.config, self.data_dir, client, "dataset")
+
+        # (), not None: a partition load that replaced nothing.
+        self.assertEqual(result.partitions, ())
+        self.assertEqual(self.read_partitions(client), [])
+        self.assertEqual(self.loaded_tables(client), [REJECTED_TABLE])
+
+    def test_truncate_mode_lists_no_partitions(self) -> None:
+        config = with_target(self.config, write_mode="truncate")
+        client = fake_client(LOANS.rows_valid, LOANS.rows_rejected)
+
+        result = load_dataset(config, self.data_dir, client, "dataset")
+
+        self.assertIsNone(result.partitions)
+
+    def test_dropped_partition_fails_before_the_rejected_load(self) -> None:
+        # The sandbox drops a day past its expiration after the job
+        # reported it loaded.
+        first = self.days[0]
+        self.held[first] = 0
+        client = self.client()
+
+        with self.assertRaises(LoadError) as context:
+            load_dataset(self.config, self.data_dir, client, "dataset")
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{VALID_LABEL}${first}: 0 rows loaded, expected "
+                f"{self.day_rows[first]}",
+                f"{VALID_LABEL}: rows in partitions older than the partition "
+                "expiration are dropped (60 days in the BigQuery sandbox)",
+            ],
+        )
+        self.assertNotIn(REJECTED_TABLE, self.loaded_tables(client))
 
     def test_additive_change_loads(self) -> None:
         *older, last = table_spec(self.config).schema

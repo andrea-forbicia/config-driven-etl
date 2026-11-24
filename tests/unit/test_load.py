@@ -35,6 +35,7 @@ from config_driven_etl.load import (
     rejected_parquet_path,
     table_label,
     verify_parquet,
+    verify_partition_rows,
     verify_table_rows,
     write_parquet,
     write_parquet_files,
@@ -876,7 +877,7 @@ class LoadParquetPartitionsTest(unittest.TestCase):
             job.result.side_effect = BadRequest("Error while reading data")
         return job
 
-    def load(self, spec: TableSpec | None = None) -> tuple[str, ...]:
+    def load(self, spec: TableSpec | None = None) -> dict[str, int]:
         return load_parquet_partitions(
             self.client, self.path, TABLE_ID, spec or target_spec()
         )
@@ -884,7 +885,10 @@ class LoadParquetPartitionsTest(unittest.TestCase):
     def test_replaces_each_day_with_its_own_rows(self) -> None:
         partitions = self.load()
 
-        self.assertEqual(partitions, ("20260101", "20260102", "20260103"))
+        self.assertEqual(
+            list(partitions.items()),
+            [("20260101", 1), ("20260102", 2), ("20260103", 1)],
+        )
         self.assertEqual(
             [
                 (table_id, frame["s"].to_list())
@@ -920,7 +924,7 @@ class LoadParquetPartitionsTest(unittest.TestCase):
 
         partitions = self.load(spec)
 
-        self.assertEqual(partitions, ("20260101", "20260102"))
+        self.assertEqual(partitions, {"20260101": 2, "20260102": 1})
         self.assertEqual([frame.height for _, frame in self.sent], [2, 1])
 
     def test_jobs_truncate_the_partition_with_an_explicit_schema(
@@ -959,7 +963,7 @@ class LoadParquetPartitionsTest(unittest.TestCase):
     def test_empty_file_replaces_no_partition(self) -> None:
         self.frame.clear().write_parquet(self.path)
 
-        self.assertEqual(self.load(), ())
+        self.assertEqual(self.load(), {})
         self.client.load_table_from_file.assert_not_called()
 
     def test_failed_job_lists_the_replaced_and_remaining_days(self) -> None:
@@ -1135,6 +1139,69 @@ class VerifyTableRowsTest(unittest.TestCase):
         self.assertEqual(
             str(context.exception),
             f"{TABLE_LABEL}: BigQuery error: 404 no such table",
+        )
+
+
+class VerifyPartitionRowsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = fake_client()
+        self.rows: dict[str, int | None] = {}
+
+        def get_table(table_id: str) -> bigquery.Table:
+            table = mock.create_autospec(bigquery.Table, instance=True)
+            table.num_rows = self.rows[table_id.rpartition("$")[2]]
+            return table
+
+        self.client.get_table.side_effect = get_table
+
+    def test_accepts_matching_counts(self) -> None:
+        self.rows = {"20260101": 1, "20260102": 2}
+
+        verify_partition_rows(
+            self.client, TABLE_ID, {"20260101": 1, "20260102": 2}
+        )
+
+        self.assertEqual(
+            [args[0] for args, _ in self.client.get_table.call_args_list],
+            [f"{TABLE_ID}$20260101", f"{TABLE_ID}$20260102"],
+        )
+
+    def test_no_partition_reads_nothing(self) -> None:
+        verify_partition_rows(self.client, TABLE_ID, {})
+
+        self.client.get_table.assert_not_called()
+
+    def test_lists_every_partition_that_differs(self) -> None:
+        # A job reports the rows it wrote, even into an expired day that
+        # BigQuery then drops.
+        self.rows = {"20260101": 0, "20260102": 2, "20260103": None}
+
+        with self.assertRaises(LoadError) as context:
+            verify_partition_rows(
+                self.client,
+                TABLE_ID,
+                {"20260101": 1, "20260102": 2, "20260103": 4},
+            )
+
+        self.assertEqual(
+            str(context.exception).splitlines(),
+            [
+                f"{TABLE_LABEL}$20260101: 0 rows loaded, expected 1",
+                f"{TABLE_LABEL}$20260103: None rows loaded, expected 4",
+                f"{TABLE_LABEL}: rows in partitions older than the partition "
+                "expiration are dropped (60 days in the BigQuery sandbox)",
+            ],
+        )
+
+    def test_api_errors_become_load_errors(self) -> None:
+        self.client.get_table.side_effect = NotFound("no such table")
+
+        with self.assertRaises(LoadError) as context:
+            verify_partition_rows(self.client, TABLE_ID, {"20260101": 1})
+
+        self.assertEqual(
+            str(context.exception),
+            f"{TABLE_LABEL}$20260101: BigQuery error: 404 no such table",
         )
 
 

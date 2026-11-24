@@ -533,6 +533,7 @@ class AuditTableSpecTest(unittest.TestCase):
                 rows_rejected=1,
                 rejections={"id: null": 1},
                 dropped_columns=("Notes",),
+                partitions=("20260101",),
             ),
             0.5,
         )
@@ -552,18 +553,23 @@ class AuditTableSpecTest(unittest.TestCase):
             [field.name for field in stage_fields["rejections"].fields],
         )
 
-    def test_dropped_columns_is_a_repeated_string(self) -> None:
+    def test_later_stage_fields_are_last_and_repeated_strings(self) -> None:
         (stages,) = [
             field
             for field in AUDIT_TABLE_SPEC.schema
             if field.name == "stages"
         ]
-        (dropped,) = [
-            field for field in stages.fields if field.name == "dropped_columns"
-        ]
-        # REPEATED, never REQUIRED: older audit tables gain it on append.
+        # Last, REPEATED and never REQUIRED: older audit tables gain them
+        # on append.
         self.assertEqual(
-            (dropped.field_type, dropped.mode), ("STRING", "REPEATED")
+            [
+                (field.name, field.field_type, field.mode)
+                for field in stages.fields[-2:]
+            ],
+            [
+                ("dropped_columns", "STRING", "REPEATED"),
+                ("partitions", "STRING", "REPEATED"),
+            ],
         )
 
 

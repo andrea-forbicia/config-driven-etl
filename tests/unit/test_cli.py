@@ -16,6 +16,7 @@ from typer.testing import CliRunner, Result
 from config_driven_etl import __version__
 from config_driven_etl.bq_schema import AUDIT_TABLE_SPEC, table_spec
 from config_driven_etl.cli import ExitCode, app
+from config_driven_etl.pipeline import StageResult
 from fixture_outcomes import (
     FIXTURES,
     OUTCOMES,
@@ -682,6 +683,31 @@ class PipelineCommandsTest(unittest.TestCase):
         )
         self.assertEqual(load["rejections"], [])
         self.assertEqual(load["dropped_columns"], [])
+        self.assertEqual(load["partitions"], [])
+        self.assertNotIn("partitions", stages[-1])
+
+    def test_partition_load_lists_its_partitions(self) -> None:
+        self.assertEqual(self.invoke("extract", LIBRARY).exit_code, 0)
+        self.assertEqual(self.invoke("transform", LIBRARY).exit_code, 0)
+        # An empty tuple is still a partition load, unlike None.
+        for partitions in [("20260101", "20260102"), ()]:
+            with self.subTest(partitions=partitions):
+                loaded = StageResult(
+                    rows_in=len(partitions),
+                    rows_out=len(partitions),
+                    partitions=partitions,
+                )
+
+                with mock.patch(
+                    "config_driven_etl.cli.load_dataset", return_value=loaded
+                ):
+                    result = self.invoke("load", LIBRARY)
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                (load,) = self.events(result)
+                self.assertEqual(load["partitions"], list(partitions))
+                (stage,) = self.summary(result)["stages"]
+                self.assertEqual(stage["partitions"], list(partitions))
 
     def enable_audit(self, *table_rows: int) -> mock.MagicMock:
         """Set BQ_AUDIT_TABLE; return the job that appends the row."""

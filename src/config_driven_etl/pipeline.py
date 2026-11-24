@@ -38,6 +38,7 @@ from config_driven_etl.load import (
     processed_parquet_path,
     rejected_parquet_path,
     table_label,
+    verify_partition_rows,
     verify_table_rows,
     write_parquet_files,
 )
@@ -65,6 +66,9 @@ class StageResult:
     schema_changes: tuple[str, ...] | None = None
     # The same for target.rejected_table; None also without one.
     rejected_schema_changes: tuple[str, ...] | None = None
+    # Day partitions (YYYYMMDD) a partition load replaced; None in other
+    # stages and with write_mode truncate.
+    partitions: tuple[str, ...] | None = None
 
 
 Stage = Literal["extract", "transform", "load"]
@@ -183,6 +187,7 @@ def audit_row(summary: RunSummary) -> dict[str, object]:
                     ).items()
                 ],
                 "dropped_columns": list(record.result.dropped_columns or ()),
+                "partitions": list(record.result.partitions or ()),
             }
             for record in summary.stages
         ],
@@ -387,7 +392,7 @@ def load_dataset(
         config.target.schema_change,
         allow_schema_change,
     )
-    _load_and_verify(client, valid)
+    partitions = _load_and_verify(client, valid)
     if rejected is not None:
         try:
             _load_and_verify(client, rejected)
@@ -403,6 +408,7 @@ def load_dataset(
         rejected_rows_loaded=None if rejected is None else rejected.rows,
         schema_changes=changes[0],
         rejected_schema_changes=None if rejected is None else changes[1],
+        partitions=partitions,
     )
 
 
@@ -482,11 +488,18 @@ def _schema_changes(
     return changes
 
 
-def _load_and_verify(client: bigquery.Client, load: _TableLoad) -> None:
+def _load_and_verify(
+    client: bigquery.Client, load: _TableLoad
+) -> tuple[str, ...] | None:
+    """Load and check the row count; return the partitions replaced."""
     if load.by_partition:
-        # Each partition job checks its own row count; the table also
-        # holds the days the file does not touch.
-        load_parquet_partitions(client, load.path, load.table_id, load.spec)
-        return
+        # The table also holds the days the file does not touch, so each
+        # day is counted on its own.
+        partitions = load_parquet_partitions(
+            client, load.path, load.table_id, load.spec
+        )
+        verify_partition_rows(client, load.table_id, partitions)
+        return tuple(partitions)
     load_parquet(client, load.path, load.table_id, load.spec)
     verify_table_rows(client, load.table_id, load.rows)
+    return None

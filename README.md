@@ -108,9 +108,8 @@ ORDER BY day DESC;
 after creation and partitions older than 60 days are dropped. The next run
 recreates a deleted table; for the audit table, that means its history
 restarts. Rows dated more than 60 days ago in a
-partitioned table are dropped by BigQuery; with `write_mode: truncate`
-the load fails its row count check, while `write_mode: partition` does
-not detect it yet.
+partitioned table are dropped by BigQuery, and the load fails its row
+count check (per day with `write_mode: partition`).
 
 ## Adding a dataset
 
