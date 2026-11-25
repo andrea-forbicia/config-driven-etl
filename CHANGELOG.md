@@ -17,6 +17,15 @@ and this project adheres to
   is its own job, so a broken source fails alone, and two runs of one
   dataset never overlap. Every run appends its audit row.
 
+### Fixed
+
+- `nyc_squirrel_census` and `wa_ev_population` download from the
+  Socrata `/api/v3/views/<id>/export.csv` endpoint. The old
+  `/api/views/<id>/rows.csv` answers `410 Gone` since Socrata
+  deprecated it, and is switched off on 2026-12-22; the new one
+  serves the same columns, so the dataset files change only their
+  `url`.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added
