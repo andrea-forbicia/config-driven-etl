@@ -16,6 +16,11 @@ and this project adheres to
   account reached through Workload Identity Federation. Each dataset
   is its own job, so a broken source fails alone, and two runs of one
   dataset never overlap. Every run appends its audit row.
+- Each scheduled job writes its run to the job summary: outcome, exit
+  code, the error of a failed run, rows per stage, rejection reasons,
+  dropped columns and replaced partitions. The rejected Parquet is
+  kept as an artifact for 7 days. A failed scheduled run is reported
+  by GitHub's own email to the workflow's author.
 
 ### Fixed
 
