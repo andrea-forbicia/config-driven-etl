@@ -3,7 +3,7 @@
 Plan of **config-driven-etl**, phase by phase. Released versions are listed
 in `CHANGELOG.md`.
 
-**Current phase: 15 — Partition loads**
+**Current phase: 16 — Scheduled runs**
 
 How to use this plan:
 
@@ -404,6 +404,47 @@ Exit: two runs of a fixture with overlapping days leave the older
 partitions intact and the overlapping ones replaced; running the same
 file twice leaves the same table state; the GitHub Release for
 `v1.7.0` exists.
+
+## Phase 16 — Scheduled runs
+
+Goal: the pipeline runs by itself every day on GitHub Actions, so a
+rolling source such as `usgs_earthquakes` builds up history in
+`partition` mode without anyone launching it. It authenticates through
+Workload Identity Federation, as the `gcp` tests do, with no key
+stored. The package and the config format do not change, so the phase
+needs no release; its changelog entry waits in `Unreleased`.
+
+- [ ] Production target, kept apart from the `gcp` tests: a BigQuery
+      dataset for scheduled runs and a GitHub environment `production`
+      holding its settings. Decide whether the tests' service account
+      is reused or a new one gets only what a run needs (create and
+      load tables, no delete) *(manual)*
+- [ ] `schedule.yml`: daily `schedule` and `workflow_dispatch`, one job
+      per dataset with `fail-fast: false` so one broken source does not
+      stop the others, a concurrency group per dataset so two runs
+      never load the same table, `BQ_AUDIT_TABLE` set. Decide which
+      datasets run (an explicit list in the workflow, or every file in
+      `datasets/` except `example.yaml`) and which code runs (the
+      latest release tag, reproducible, or `main`) `[ci]`
+- [ ] Each job writes its `run_finished` line to the job summary, so a
+      run reads at a glance without opening the logs, and keeps the
+      rejected Parquet as a short-lived artifact. Decide how a failure
+      is noticed (GitHub's email to the workflow's author, or an issue
+      opened by the workflow) `[ci]`
+- [ ] README: how to set up the environment and trigger a run by hand,
+      and the known limits: the sandbox expires partitions after 60
+      days, so history never goes further back; GitHub disables a
+      scheduled workflow after 60 days without activity in the
+      repository; a scheduled run can start late `[docs]`
+- [ ] Verify: a manual dispatch loads every scheduled dataset; two
+      scheduled runs on consecutive days leave `usgs_earthquakes` with
+      more days than one run alone, and the audit table holds one row
+      per dataset per run *(manual)*
+
+Exit: two scheduled runs on consecutive days succeed without anyone
+launching them; `usgs_earthquakes` keeps the days of the first run that
+the second file no longer has; every run has its audit row; a failing
+dataset fails its own job and the other datasets still load.
 
 ## Definition of done
 
