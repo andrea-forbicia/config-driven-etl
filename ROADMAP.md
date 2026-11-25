@@ -414,18 +414,18 @@ Workload Identity Federation, as the `gcp` tests do, with no key
 stored. The package and the config format do not change, so the phase
 needs no release; its changelog entry waits in `Unreleased`.
 
-- [ ] Production target, kept apart from the `gcp` tests: a BigQuery
+- [x] Production target, kept apart from the `gcp` tests: a BigQuery
       dataset for scheduled runs and a GitHub environment `production`
-      holding its settings. Decide whether the tests' service account
-      is reused or a new one gets only what a run needs (create and
-      load tables, no delete) *(manual)*
-- [ ] `schedule.yml`: daily `schedule` and `workflow_dispatch`, one job
+      holding its settings. A new service account, writer on that
+      dataset only: delete stays allowed there, since removing it
+      needs a custom role to maintain *(manual)*
+- [x] `schedule.yml`: daily `schedule` and `workflow_dispatch`, one job
       per dataset with `fail-fast: false` so one broken source does not
       stop the others, a concurrency group per dataset so two runs
-      never load the same table, `BQ_AUDIT_TABLE` set. Decide which
-      datasets run (an explicit list in the workflow, or every file in
-      `datasets/` except `example.yaml`) and which code runs (the
-      latest release tag, reproducible, or `main`) `[ci]`
+      never load the same table, `BQ_AUDIT_TABLE` set. Every file in
+      `datasets/` except `example.yaml` runs, so adding a dataset
+      schedules it; the code is `main`, always green, so a new dataset
+      file runs without waiting for a release `[ci]`
 - [ ] Each job writes its `run_finished` line to the job summary, so a
       run reads at a glance without opening the logs, and keeps the
       rejected Parquet as a short-lived artifact. Decide how a failure

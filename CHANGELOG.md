@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `schedule.yml`: every dataset in `datasets/` except `example.yaml`
+  runs once a day from `main`, and on demand, into the `production`
+  GitHub environment, with its own BigQuery dataset and service
+  account reached through Workload Identity Federation. Each dataset
+  is its own job, so a broken source fails alone, and two runs of one
+  dataset never overlap. Every run appends its audit row.
+
 ## [1.7.0] - 2026-11-24
 
 ### Added
