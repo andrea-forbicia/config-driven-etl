@@ -2,7 +2,7 @@
 # Source: NYC Open Data (vfnx-vebw), NYC Open Data Terms of Use.
 name: nyc_squirrel_census
 source:
-  url: https://data.cityofnewyork.us/api/views/vfnx-vebw/rows.csv?accessType=DOWNLOAD
+  url: https://data.cityofnewyork.us/api/v3/views/vfnx-vebw/export.csv
 columns:
   # Hectare, shift, date (MMDD + "18" for 2018) and sighting number.
   - source: "Unique Squirrel ID"

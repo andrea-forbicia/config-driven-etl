@@ -3,7 +3,7 @@
 # Source: data.wa.gov (f6w7-q2d2), ODbL 1.0.
 name: wa_ev_population
 source:
-  url: https://data.wa.gov/api/views/f6w7-q2d2/rows.csv?accessType=DOWNLOAD
+  url: https://data.wa.gov/api/v3/views/f6w7-q2d2/export.csv
 columns:
   # VINs never use I, O or Q.
   - source: "VIN (1-10)"
