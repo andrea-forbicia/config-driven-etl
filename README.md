@@ -111,7 +111,39 @@ after creation and partitions older than 60 days are dropped. The next run
 recreates a deleted table; for the audit table, that means its history
 restarts. Rows dated more than 60 days ago in a
 partitioned table are dropped by BigQuery, and the load fails its row
-count check (per day with `write_mode: partition`).
+count check (per day with `write_mode: partition`). Loads do not renew a
+table's expiry, so a `partition` table built up by daily runs is still
+deleted 60 days after its first run and restarts from the days in the
+next file.
+
+### Scheduled runs
+
+`.github/workflows/schedule.yml` runs every file in `datasets/` except
+`example.yaml` once a day at 05:17 UTC from `main`, one job per dataset;
+a failing dataset fails only its own job. Each job writes its run to the
+job summary and keeps the rejected Parquet as an artifact for 7 days; a
+failed scheduled run is emailed by GitHub to the workflow's author. To
+run it now:
+
+```
+gh workflow run schedule.yml --ref main
+```
+
+It loads through Workload Identity Federation, with no key stored, and
+needs:
+
+- a GitHub environment `production`, limited to protected branches, with
+  the secrets `GCP_SERVICE_ACCOUNT` and `BQ_DATASET` and the variable
+  `BQ_AUDIT_TABLE`;
+- the repository secrets `GCP_PROJECT_ID` and
+  `GCP_WORKLOAD_IDENTITY_PROVIDER`, shared with the `gcp` tests;
+- a service account with `roles/bigquery.jobUser` on the project and
+  write access to that dataset only, which the identity provider lets
+  this repository use from `main`.
+
+GitHub disables a scheduled workflow after 60 days without activity in
+the repository (re-enable it from the Actions tab), and a scheduled run
+can start late when GitHub is busy.
 
 ## Adding a dataset
 
@@ -121,6 +153,7 @@ count check (per day with `write_mode: partition`).
    type, optional rules), the dedup keys and the BigQuery target.
 3. Check it: `python -m config_driven_etl validate datasets/<name>.yaml`.
 4. Run it: `python -m config_driven_etl run datasets/<name>.yaml`.
+5. Once merged to `main`, the scheduled workflow runs it every day.
 
 No code changes are needed. Dataset files are committed, so they must not
 contain secrets.

@@ -431,11 +431,12 @@ needs no release; its changelog entry waits in `Unreleased`.
       rejected Parquet as a short-lived artifact. A failure is noticed
       through GitHub's email to the workflow's author: no code, and a
       single maintainer needs nothing more `[ci]`
-- [ ] README: how to set up the environment and trigger a run by hand,
+- [x] README: how to set up the environment and trigger a run by hand,
       and the known limits: the sandbox expires partitions after 60
-      days, so history never goes further back; GitHub disables a
-      scheduled workflow after 60 days without activity in the
-      repository; a scheduled run can start late `[docs]`
+      days, so history never goes further back, and deletes the table
+      itself 60 days after its first run; GitHub disables a scheduled
+      workflow after 60 days without activity in the repository; a
+      scheduled run can start late `[docs]`
 - [ ] Verify: a manual dispatch loads every scheduled dataset; two
       scheduled runs on consecutive days leave `usgs_earthquakes` with
       more days than one run alone, and the audit table holds one row
