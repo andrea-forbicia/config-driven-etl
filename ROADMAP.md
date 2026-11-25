@@ -426,11 +426,11 @@ needs no release; its changelog entry waits in `Unreleased`.
       `datasets/` except `example.yaml` runs, so adding a dataset
       schedules it; the code is `main`, always green, so a new dataset
       file runs without waiting for a release `[ci]`
-- [ ] Each job writes its `run_finished` line to the job summary, so a
+- [x] Each job writes its `run_finished` line to the job summary, so a
       run reads at a glance without opening the logs, and keeps the
-      rejected Parquet as a short-lived artifact. Decide how a failure
-      is noticed (GitHub's email to the workflow's author, or an issue
-      opened by the workflow) `[ci]`
+      rejected Parquet as a short-lived artifact. A failure is noticed
+      through GitHub's email to the workflow's author: no code, and a
+      single maintainer needs nothing more `[ci]`
 - [ ] README: how to set up the environment and trigger a run by hand,
       and the known limits: the sandbox expires partitions after 60
       days, so history never goes further back; GitHub disables a

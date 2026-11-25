@@ -78,5 +78,27 @@ jobs:
       - name: Install
         run: pip install .
 
+      # The log goes to a file for the summary, then to the job log.
       - name: Run
-        run: python -m config_driven_etl run "$DATASET"
+        id: run
+        run: |
+          echo "name=$(basename "$DATASET" .yaml)" >> "$GITHUB_OUTPUT"
+          status=0
+          python -m config_driven_etl run "$DATASET" 2> run.log \
+            || status=$?
+          cat run.log >&2
+          exit "$status"
+
+      - name: Summary
+        if: always()
+        run: python3 .github/scripts/run_summary.py run.log "$DATASET"
+
+      # Rejected rows are on the runner only; keep them for a look.
+      - name: Keep rejected rows
+        if: always() && steps.run.outputs.name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: rejected-${{ steps.run.outputs.name }}
+          path: data/processed/*/*.rejected.parquet
+          if-no-files-found: ignore
+          retention-days: 7

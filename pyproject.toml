@@ -74,7 +74,7 @@ show_missing = true
 skip_covered = true
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", ".github/scripts"]
 pythonVersion = "3.12"
 extraPaths = ["tests"]
 typeCheckingMode = "standard"
