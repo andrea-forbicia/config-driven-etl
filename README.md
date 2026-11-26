@@ -119,7 +119,7 @@ next file.
 ### Scheduled runs
 
 `.github/workflows/schedule.yml` runs every file in `datasets/` except
-`example.yaml` once a day at 05:17 UTC from `main`, one job per dataset;
+`example.yaml` once a day at 09:07 UTC from `main`, one job per dataset;
 a failing dataset fails only its own job. Each job writes its run to the
 job summary and keeps the rejected Parquet as an artifact for 7 days; a
 failed scheduled run is emailed by GitHub to the workflow's author. To
