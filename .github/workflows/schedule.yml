@@ -9,8 +9,9 @@ name: Scheduled runs
 
 on:
   schedule:
-    # Off the hour: runs queued at :00 are the most delayed.
-    - cron: "17 5 * * *"
+    # 09:07 UTC, during the day so a failure email is read the same day;
+    # off the hour, since runs queued at :00 are the most delayed.
+    - cron: "7 9 * * *"
   workflow_dispatch:
 
 permissions:
