@@ -414,6 +414,12 @@ Workload Identity Federation, as the `gcp` tests do, with no key
 stored. The package and the config format do not change, so the phase
 needs no release; its changelog entry waits in `Unreleased`.
 
+Outcome: GitHub never fired a `schedule` event for this repository, not
+at 05:17 or 09:07 UTC, not for a 15-minute probe, not after disabling
+and re-enabling the workflows, while every `workflow_dispatch` ran. The
+cron was dropped: the workflow became `production.yml`, started by
+hand, and the phase closes on what a dispatch proves.
+
 - [x] Production target, kept apart from the `gcp` tests: a BigQuery
       dataset for scheduled runs and a GitHub environment `production`
       holding its settings. A new service account, writer on that
@@ -437,15 +443,16 @@ needs no release; its changelog entry waits in `Unreleased`.
       itself 60 days after its first run; GitHub disables a scheduled
       workflow after 60 days without activity in the repository; a
       scheduled run can start late `[docs]`
-- [ ] Verify: a manual dispatch loads every scheduled dataset; two
-      scheduled runs on consecutive days leave `usgs_earthquakes` with
-      more days than one run alone, and the audit table holds one row
-      per dataset per run *(manual)*
+- [x] Verify: a manual dispatch loads every dataset, `usgs_earthquakes`
+      in `partition` mode, and the audit table holds one row per
+      dataset per run. Scheduled runs on consecutive days were dropped
+      with the cron *(manual)*
+- [x] Drop the schedule: remove the cron and the probe, rename the
+      workflow `production.yml` `[ci]`
 
-Exit: two scheduled runs on consecutive days succeed without anyone
-launching them; `usgs_earthquakes` keeps the days of the first run that
-the second file no longer has; every run has its audit row; a failing
-dataset fails its own job and the other datasets still load.
+Exit: a dispatch from `main` loads every dataset through Workload
+Identity Federation; every run has its audit row; a failing dataset
+fails its own job and the other datasets still load.
 
 ## Definition of done
 

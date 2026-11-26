@@ -1,17 +1,14 @@
-name: Scheduled runs
+name: Production runs
 
-# Runs every dataset in datasets/ once a day, from main, into the
+# Runs every dataset in datasets/, on demand from main, into the
 # production environment: its own BigQuery dataset and service account,
 # reached through Workload Identity Federation, so no key is stored.
 # The environment holds GCP_SERVICE_ACCOUNT, BQ_DATASET and the variable
 # BQ_AUDIT_TABLE; GCP_PROJECT_ID and GCP_WORKLOAD_IDENTITY_PROVIDER are
 # the repository secrets the gcp tests use.
+# There is no schedule: GitHub never fired one for this repository.
 
 on:
-  schedule:
-    # 09:07 UTC, during the day so a failure email is read the same day;
-    # off the hour, since runs queued at :00 are the most delayed.
-    - cron: "7 9 * * *"
   workflow_dispatch:
 
 permissions:
@@ -50,10 +47,10 @@ jobs:
       fail-fast: false
       matrix:
         dataset: ${{ fromJSON(needs.datasets.outputs.files) }}
-    # Two runs of one dataset would race on the same tables; a dispatch
-    # during a scheduled run waits for it instead.
+    # Two runs of one dataset would race on the same tables; a second
+    # dispatch waits for the first instead.
     concurrency:
-      group: schedule-${{ matrix.dataset }}
+      group: production-${{ matrix.dataset }}
       cancel-in-progress: false
     env:
       GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
